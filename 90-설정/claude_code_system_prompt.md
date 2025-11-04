@@ -95,22 +95,40 @@ content = generate_content_from_spec(spec_content, user_params)
 Filesystem:write_file(filename_data['full_path'], content)
 ```
 
-#### Step 5: 검증 (Python 도우미)
+#### Step 5: 검증 (Deep Validation)
 ```python
-# Desktop Commander로 파일 검증
+# Desktop Commander로 파일 검증 (기본이 deep, validator specs 자동 로드)
 result = Desktop_Commander.run_command(
-    f"cd /Users/seolmin.kwon/Documents/docs-system/90-설정 && python3 orchestrator.py validate '{filepath}'"
+    f"cd ~/Documents/docs-system/90-설정 && python3 orchestrator.py validate '{filepath}'"
 )
 validation = json.loads(result)
 # {
 #   "status": "success",
-#   "warnings": ["권장: MOC 링크 추가"]
+#   "warnings": ["권장: MOC 링크 추가"],
+#   "checks": {...},  # 구조 검증 결과
+#   "deep": {
+#     "validator_specs": ["/path/to/link-validator.spec.md", ...],
+#     "context": {
+#       "frontmatter": {...},
+#       "link_analysis": {
+#         "by_type": {"moc": 1, "concept": 4, ...},
+#         "links": {"moc": [...], "concept": [...], ...}
+#       }
+#     }
+#   }
 # }
 
-# 경고가 있으면 사용자에게 제안
+# validator specs를 읽고 context로 품질 분석
+for spec_path in validation['deep']['validator_specs']:
+    spec = Filesystem:read_file(spec_path)
+    # link-validator.spec.md 규칙으로 링크 품질, 양방향성, 태그 일관성 체크
+
+# 경고 및 제안 출력
 if validation.get('warnings'):
     for warning in validation['warnings']:
         print(f"💡 {warning}")
+
+# Quick 옵션: python3 orchestrator.py validate '{filepath}' --quick
 ```
 
 #### Step 6: 자동 개선 (지능형 보강)
