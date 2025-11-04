@@ -39,6 +39,107 @@ action() {
     echo -e "${PURPLE}🚀 $1${NC}"
 }
 
+# Suffix 자동 증가 (무제한 확장)
+calculate_suffix() {
+    local date_part="$1"
+    local concept="$2"
+    local base_dir="$3"
+    
+    # Suffix 없이 먼저 시도
+    local base_file="$base_dir/개념-${date_part}-${concept}.md"
+    if [[ ! -f "$base_file" ]]; then
+        echo ""
+        return 0
+    fi
+    
+    # a-z (26개)
+    local suffixes=("a" "b" "c" "d" "e" "f" "g" "h" "i" "j" "k" "l" "m" "n" "o" "p" "q" "r" "s" "t" "u" "v" "w" "x" "y" "z")
+    for suffix in "${suffixes[@]}"; do
+        local check_file="$base_dir/개념-${date_part}${suffix}-${concept}.md"
+        if [[ ! -f "$check_file" ]]; then
+            echo "$suffix"
+            return 0
+        fi
+    done
+    
+    # 26개 초과 시 타임스탬프 추가
+    warn "하루에 같은 개념을 27번 이상 생성했습니다. 타임스탬프를 추가합니다."
+    echo "-$(date +%H%M)"
+}
+
+# 지능형 링크 제안 함수
+suggest_links() {
+    local query="$1"
+    local search_dir="$2"
+    local pattern="$3"
+    local exclude_basename="$4"
+
+    if [[ -z "$search_dir" || ! -d "$search_dir" ]]; then
+        return 0
+    fi
+
+    # Python 존재 확인
+    local python_cmd=""
+    if command -v python3 >/dev/null 2>&1; then
+        python_cmd="python3"
+    elif command -v python >/dev/null 2>&1; then
+        python_cmd="python"
+    else
+        return 0  # Python 없으면 조용히 종료
+    fi
+
+    # Python 스크립트 실행 (에러 처리 포함)
+    $python_cmd - "$query" "$search_dir" "$pattern" "$exclude_basename" 2>/dev/null <<'PY' || return 0
+import difflib
+import glob
+import os
+import sys
+
+query, search_dir, pattern, exclude_name = sys.argv[1:5]
+paths = glob.glob(os.path.join(search_dir, "**", pattern), recursive=True)
+
+names = []
+for path in paths:
+    name = os.path.splitext(os.path.basename(path))[0]
+    if exclude_name and name == exclude_name:
+        continue
+    if name not in names:
+        names.append(name)
+
+if not names:
+    sys.exit(0)
+
+query_norm = query.strip().lower()
+
+def simplify(text: str) -> str:
+    lowered = text.lower()
+    for prefix in ("맵-", "개념-", "정리-", "moc-"):
+        if lowered.startswith(prefix):
+            lowered = lowered[len(prefix):]
+            break
+    return lowered.replace('-', ' ')
+
+
+def score(name: str) -> float:
+    simplified = simplify(name)
+    if not query_norm:
+        return 0.0
+    ratio = difflib.SequenceMatcher(None, query_norm, simplified).ratio()
+    if query_norm and query_norm in simplified:
+        ratio += 0.5
+    return ratio
+
+
+if query_norm:
+    ranked = sorted(((score(name), name) for name in names), key=lambda item: (-item[0], item[1]))
+else:
+    ranked = sorted((0.0, name) for name in names)
+
+for _, name in ranked[:3]:
+    print(name)
+PY
+}
+
 # 초기화
 init() {
     action "문서 시스템 초기화 중..."
@@ -164,13 +265,66 @@ extract() {
     source "$SCRIPTS_DIR/loader.sh"
     load_specs_for_scenario "create"
     
-    # 파일명 생성
+    # 파일명 생성 (suffix 자동 증가)
     local date_part=$(date +"%Y%m%d")
-    local suffix="a"  # TODO: 동일 날짜 파일 체크 후 증가
-    local filename="$DOCS_ROOT/20-정리/핵심개념/개념-${date_part}${suffix}-${concept}.md"
+    local suffix=$(calculate_suffix "$date_part" "$concept" "$DOCS_ROOT/20-정리/핵심개념")
+    local note_basename="개념-${date_part}${suffix}-${concept}"
+    local filename="$DOCS_ROOT/20-정리/핵심개념/${note_basename}.md"
+
+    mkdir -p "$DOCS_ROOT/20-정리/핵심개념"
+
+    # 기존 파일 여부 확인
+    local file_exists=false
+    [[ -f "$filename" ]] && file_exists=true
+
+    # 링크 제안
+    info "관련 노트 검색 중..."
+    local moc_suggestions=()
+    local concept_suggestions=()
     
-    # 기본 구조 생성
-    cat > "$filename" <<EOF
+    mapfile -t moc_suggestions < <(suggest_links "$concept" "$DOCS_ROOT/30-연결" "맵-*.md" "") || true
+    mapfile -t concept_suggestions < <(suggest_links "$concept" "$DOCS_ROOT/20-정리/핵심개념" "개념-*.md" "$note_basename") || true
+
+    # 제안 표시
+    if (( ${#moc_suggestions[@]} > 0 )); then
+        info "추천 MOC: ${moc_suggestions[*]}"
+    else
+        warn "추천할 MOC를 찾지 못했습니다"
+    fi
+
+    if (( ${#concept_suggestions[@]} > 0 )); then
+        info "관련 핵심개념 후보: ${concept_suggestions[*]}"
+    fi
+
+    # 추가 여부 결정
+    local add_moc_links=false
+    local add_concept_links=false
+    
+    if [[ "$file_exists" == "true" ]]; then
+        # 기존 파일 수정: 사용자 확인
+        warn "⚠️  기존 파일을 수정합니다: $(basename "$filename")"
+        
+        if [[ -t 0 ]] && (( ${#moc_suggestions[@]} > 0 )); then
+            read -p "추천 MOC를 추가할까요? (y/N): " confirm
+            [[ "$confirm" =~ ^[Yy] ]] && add_moc_links=true
+        fi
+
+        if [[ -t 0 ]] && (( ${#concept_suggestions[@]} > 0 )); then
+            read -p "관련 핵심개념을 추가할까요? (y/N): " confirm
+            [[ "$confirm" =~ ^[Yy] ]] && add_concept_links=true
+        fi
+    else
+        # 새 파일 생성: 자동 추가
+        if (( ${#moc_suggestions[@]} > 0 || ${#concept_suggestions[@]} > 0 )); then
+            info "✨ 추천 링크를 자동으로 추가합니다"
+        fi
+        add_moc_links=true
+        add_concept_links=true
+    fi
+
+    # 파일 생성/수정
+    {
+        cat <<EOF
 ---
 type: permanent
 source: [[$source]]
@@ -184,17 +338,43 @@ tags: [permanent/${concept}]
 [100줄 이내로 단일 개념 설명]
 
 ## 연결된 개념
-- MOC: [[맵-주제]] ✅ 필수
-- 관련 개념: [[개념1]], [[개념2]] 🔶 권장
+### 상위 개념
+EOF
+
+        # MOC 링크
+        if [[ "$add_moc_links" == "true" ]] && (( ${#moc_suggestions[@]} > 0 )); then
+            for link in "${moc_suggestions[@]}"; do
+                printf -- "- [[%s]]\n" "$link"
+            done
+        else
+            echo "- [ ] 관련 MOC 추가 필요"
+        fi
+
+        echo ""
+        echo "### 관련 개념"
+        
+        # 개념 링크
+        if [[ "$add_concept_links" == "true" ]] && (( ${#concept_suggestions[@]} > 0 )); then
+            for link in "${concept_suggestions[@]}"; do
+                printf -- "- [[%s]]\n" "$link"
+            done
+        else
+            echo "- [ ] 연결할 핵심개념 추가 필요"
+        fi
+
+        cat <<EOF
 
 ## 참고
 - **출처**: [[$source]]
 EOF
-    
+    } > "$filename"
+
     success "핵심개념 생성: $filename"
     
-    # MOC 연결 제안
-    warn "MOC 연결이 필요합니다. 적절한 MOC를 선택하거나 새로 생성하세요."
+    # 경고 (MOC 연결 안 했을 때만)
+    if [[ "$add_moc_links" != "true" ]] || (( ${#moc_suggestions[@]} == 0 )); then
+        warn "MOC 연결이 필요합니다. 적절한 MOC를 선택하거나 새로 생성하세요"
+    fi
     
     # 검증
     "$SCRIPTS_DIR/validate.sh" note "핵심개념" "$filename" || true

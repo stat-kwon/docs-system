@@ -12,6 +12,8 @@ SPECS_DIR="$DOCS_ROOT/90-설정/specs"
 export DOCS_PHASE=""
 export DOCS_SCENARIO=""
 export LOADED_SPECS=""
+declare -a LOADED_SPEC_PATHS=()
+SPEC_CONTENT_BUFFER=""
 
 # 색상 정의
 BLUE='\033[0;34m'
@@ -64,12 +66,19 @@ load_spec_file() {
         # 실제 환경에서는 Filesystem:read_file() 호출
         # 여기서는 파일 존재 확인만
         if [[ -r "$spec_file" ]]; then
-            LOADED_SPECS="$LOADED_SPECS:$(basename "$spec_file")"
-            log_loaded "$(basename "$spec_file")"
-            
-            # 파일 내용을 환경변수로 export (선택적)
-            # export SPEC_CONTENT_$(basename "$spec_file" .spec.md)="$(cat "$spec_file")"
-            
+            local spec_name="$(basename "$spec_file")"
+            LOADED_SPECS="$LOADED_SPECS:$spec_name"
+            LOADED_SPEC_PATHS+=("$spec_file")
+
+            # spec 내용을 버퍼에 저장 (LLM 컨텍스트 전달용)
+            local content
+            content="$(<"$spec_file")"
+            SPEC_CONTENT_BUFFER+=$'\n'"## ===== $spec_name ====="$'\n\n'"$content"$'\n'
+
+            export SPEC_CONTENT_BUFFER
+
+            log_loaded "$spec_name"
+
             return 0
         fi
     fi
@@ -81,7 +90,11 @@ load_spec_file() {
 load_specs_for_scenario() {
     local scenario="$1"
     local specs_to_load=()
-    
+
+    LOADED_SPECS=""
+    LOADED_SPEC_PATHS=()
+    SPEC_CONTENT_BUFFER=""
+
     # 항상 로드하는 기본 spec
     specs_to_load+=("$SPECS_DIR/core/structure.spec.md")
     specs_to_load+=("$SPECS_DIR/core/metadata.spec.md")
@@ -138,19 +151,22 @@ print_loaded_specs() {
     
     # 각 spec 파일 크기 계산 (컨텍스트 추정)
     local total_lines=0
-    for spec in ${LOADED_SPECS//:/ }; do
-        if [[ -n "$spec" ]]; then
-            local file_path=$(find "$SPECS_DIR" -name "$spec" 2>/dev/null | head -1)
-            if [[ -f "$file_path" ]]; then
-                local lines=$(wc -l < "$file_path")
-                total_lines=$((total_lines + lines))
-                echo "  - $spec: ${lines} lines"
-            fi
+    for spec_path in "${LOADED_SPEC_PATHS[@]}"; do
+        if [[ -f "$spec_path" ]]; then
+            local spec_name="$(basename "$spec_path")"
+            local lines=$(wc -l < "$spec_path")
+            total_lines=$((total_lines + lines))
+            echo "  - $spec_name: ${lines} lines"
         fi
     done
     
     echo "------------------------"
     echo "Total context: ${total_lines} lines"
+    echo "Buffer size: ${#SPEC_CONTENT_BUFFER} chars"
+    
+    # 토큰 추정 (대략 4 chars = 1 token)
+    local estimated_tokens=$((${#SPEC_CONTENT_BUFFER} / 4))
+    echo "Estimated tokens: ~${estimated_tokens}"
     
     # 기존 대비 절약률 계산
     local original_lines=1392  # system_prompt.md + link_prompt.md
