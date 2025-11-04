@@ -1,0 +1,115 @@
+# 경량 규칙 정의 - orchestrator.py가 사용
+version: "1.0"
+docs_root: "/Users/seolmin.kwon/Documents/docs-system"
+
+# 시나리오 정의
+scenarios:
+  capture:
+    keywords: ["저장", "캡처", "메모", "기록", "capture"]
+    filename_template: "{date:%Y%m%d-%H%M}-{title}.md"
+    path: "10-수집/즉흥메모"
+    spec_files:
+      - "scenarios/capture.spec.md"
+      - "core/metadata.spec.md"
+    validation:
+      - source_field_exists
+      - tags_field_exists
+    auto_execute: true
+    
+  process:
+    keywords: ["정리", "요약", "추출", "process"]
+    filename_template: "정리-{date:%Y%m%d}-{title}.md"
+    path: "20-정리/자료정리"
+    spec_files:
+      - "scenarios/process.spec.md"
+      - "core/metadata.spec.md"
+    validation:
+      - source_field_exists
+      - source_must_be_원문
+    auto_execute: true
+    
+  create:
+    keywords: ["개념", "영구", "카드", "permanent", "create"]
+    filename_template: "개념-{date:%Y%m%d}{suffix}-{title}.md"
+    path: "20-정리/핵심개념"
+    spec_files:
+      - "scenarios/create.spec.md"
+      - "core/metadata.spec.md"
+      - "core/link-rules.spec.md"
+    validation:
+      - source_field_exists
+      - moc_link_recommended
+    auto_execute: false  # MOC 연결 제안 필요
+    needs_suffix: true
+    
+  connect:
+    keywords: ["연결", "맵", "MOC", "지도", "connect"]
+    filename_template: "맵-{title}.md"
+    path: "30-연결"
+    spec_files:
+      - "scenarios/connect.spec.md"
+      - "core/link-rules.spec.md"
+    validation:
+      - min_concepts: 3
+    auto_execute: false
+    
+  project:
+    keywords: ["프로젝트", "실행", "project"]
+    filename_template: "_index.md"
+    path: "40-실행/{project_name}"
+    spec_files:
+      - "scenarios/project.spec.md"
+    validation: []
+    auto_execute: false
+    create_structure:
+      - planning.md
+      - resources.md
+      - tasks.md
+    
+  review:
+    keywords: ["검토", "리뷰", "확인", "review"]
+    spec_files:
+      - "scenarios/review.spec.md"
+    read_only: true
+    
+  search:
+    keywords: ["검색", "찾기", "조회", "search"]
+    spec_files:
+      - "scenarios/search.spec.md"
+    read_only: true
+
+# 전역 검증 설정
+validation:
+  source_chain: required
+  moc_link_min: 1
+  concept_link_min: 2
+
+# Suffix 설정
+suffix:
+  chars: "abcdefghij"
+  
+# 첨부파일 설정
+attachments:
+  base_path: "80-보관/첨부파일"
+  organize_by: date
+  date_format: "%Y%m%d"
+
+# 제안 설정
+suggestions:
+  enabled: true
+  
+  moc:
+    triggers: ["create", "process"]
+    min_tag_matches: 1
+    max_suggestions: 3
+    
+  concept:
+    triggers: ["create"]
+    min_tag_matches: 1
+    max_suggestions: 5
+    
+  # Claude가 판단할 때 참고할 가중치
+  similarity_weights:
+    tag_match: 0.5      # 태그 일치 50%
+    title_similarity: 0.3  # 제목 유사도 30%
+    content_relevance: 0.2 # 내용 관련성 20%
