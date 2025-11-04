@@ -5,7 +5,7 @@ docs_root: "/Users/seolmin.kwon/Documents/docs-system"
 # 시나리오 정의
 scenarios:
   capture:
-    keywords: ["저장", "캡처", "메모", "기록", "capture"]
+    description: "즉흥메모 - 아이디어, TODO, 빠른 생각 캡처"
     filename_template: "{date}-{time}-{title}.md"
     path: "10-수집/즉흥메모"
     spec_files:
@@ -17,7 +17,7 @@ scenarios:
     auto_execute: true
     
   process:
-    keywords: ["정리", "요약", "추출", "process"]
+    description: "자료정리 - 원문 분석 및 요약"
     filename_template: "정리-{date}-{title}.md"
     path: "20-정리/자료정리"
     spec_files:
@@ -29,7 +29,7 @@ scenarios:
     auto_execute: true
     
   create:
-    keywords: ["개념", "영구", "카드", "permanent", "create"]
+    description: "핵심개념 - 단일 원자적 개념 (100줄 제한)"
     filename_template: "개념-{date}{suffix}-{title}.md"
     path: "20-정리/핵심개념"
     spec_files:
@@ -43,7 +43,7 @@ scenarios:
     needs_suffix: true
     
   connect:
-    keywords: ["연결", "맵", "MOC", "지도", "connect"]
+    description: "MOC - 개념 연결 맵"
     filename_template: "맵-{title}.md"
     path: "30-연결"
     spec_files:
@@ -54,7 +54,7 @@ scenarios:
     auto_execute: false
     
   project:
-    keywords: ["프로젝트", "실행", "project"]
+    description: "프로젝트 - 실행 계획"
     filename_template: "_index.md"
     path: "40-실행/{project_name}"
     spec_files:
@@ -67,16 +67,17 @@ scenarios:
       - tasks.md
     
   review:
-    keywords: ["검토", "리뷰", "확인", "review"]
+    description: "리뷰 - 주간/월간 검토"
     spec_files:
       - "scenarios/review.spec.md"
     read_only: true
     
   search:
-    keywords: ["검색", "찾기", "조회", "search"]
+    description: "검색 - 기본 시나리오 (명확하지 않은 입력)"
     spec_files:
       - "scenarios/search.spec.md"
     read_only: true
+    is_default: true  # Claude가 판단하지 못할 때 기본값
 
 # 전역 검증 설정
 validation:

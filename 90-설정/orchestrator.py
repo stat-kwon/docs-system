@@ -1,13 +1,7 @@
 #!/usr/bin/env python3
 """
-Zettelkasten 도우미 v3 - 환경 독립성과 강화된 에러 처리
-
-주요 변경사항:
-- 환경 변수 기반 경로 설정 (DOCS_HOME)
-- 통합 로깅 시스템
-- 시나리오별 검증 로직
-- 개선된 파일명 생성 (슬러그화)
-- 유연한 프런트매터 파싱
+Zettelkasten 도우미 v4 - 단순화 버전
+Claude Desktop이 시나리오를 판별하고, 이 스크립트는 실행만 담당
 """
 
 import os
@@ -22,7 +16,7 @@ from datetime import datetime
 from typing import Dict, Any, List, Optional
 
 class ZettelkastenHelper:
-    """경량 도우미 클래스 - 환경 독립적 버전"""
+    """경량 도우미 클래스 - 시나리오 매칭 제거"""
     
     def __init__(self, config_path: str):
         # 로깅 설정
@@ -67,127 +61,33 @@ class ZettelkastenHelper:
         )
         self.logger = logging.getLogger(__name__)
     
-    def match_scenario(self, user_input: str) -> Dict[str, Any]:
-        """시나리오 매칭 - 단순 버전 (하위 호환성)"""
-        user_input_lower = user_input.lower()
+    def get_scenario_info(self, scenario: str) -> Dict[str, Any]:
+        """
+        시나리오 정보 반환 (Claude Desktop이 시나리오 판별 후 호출)
+        """
+        if scenario not in self.config['scenarios']:
+            # 기본 시나리오 찾기
+            default_scenario = 'search'
+            for name, config in self.config['scenarios'].items():
+                if config.get('is_default', False):
+                    default_scenario = name
+                    break
+            scenario = default_scenario
+            self.logger.warning(f"Unknown scenario '{scenario}', using default '{default_scenario}'")
         
-        for scenario_name, scenario_config in self.config['scenarios'].items():
-            keywords = scenario_config.get('keywords', [])
-            if any(keyword in user_input_lower for keyword in keywords):
-                return {
-                    'scenario': scenario_name,
-                    'config': scenario_config,
-                    'spec_files': scenario_config.get('spec_files', []),
-                    'path': scenario_config.get('path', ''),
-                    'auto_execute': scenario_config.get('auto_execute', False),
-                    'validation': scenario_config.get('validation', [])
-                }
+        scenario_config = self.config['scenarios'][scenario]
         
-        # 매칭 실패시 기본 시나리오 반환
         return {
-            'scenario': 'search',  # 기본값을 None에서 'search'로 변경
-            'config': self.config['scenarios'].get('search', {}),
-            'spec_files': self.config['scenarios'].get('search', {}).get('spec_files', []),
-            'path': '',
-            'auto_execute': False,
-            'validation': [],
-            'fallback': True,
-            'message': 'No exact match found, defaulting to search'
+            'scenario': scenario,
+            'description': scenario_config.get('description', ''),
+            'spec_files': scenario_config.get('spec_files', []),
+            'path': scenario_config.get('path', ''),
+            'filename_template': scenario_config.get('filename_template', ''),
+            'auto_execute': scenario_config.get('auto_execute', False),
+            'validation': scenario_config.get('validation', []),
+            'read_only': scenario_config.get('read_only', False),
+            'needs_suffix': scenario_config.get('needs_suffix', False)
         }
-    
-    def match_scenario_advanced(self, user_input: str) -> Dict[str, Any]:
-        """
-        고급 시나리오 매칭 - 가중치 기반 점수 계산
-        Claude Desktop이 최종 판단할 수 있도록 상세 정보 제공
-        """
-        user_input_lower = user_input.lower()
-        scenario_scores = {}
-        
-        # 각 시나리오별 점수 계산
-        for scenario_name, scenario_config in self.config['scenarios'].items():
-            score = 0
-            matched_keywords = []
-            
-            keywords = scenario_config.get('keywords', [])
-            weights = scenario_config.get('keyword_weights', {})
-            
-            for keyword in keywords:
-                if keyword in user_input_lower:
-                    # 기본 점수 1점, 가중치가 있으면 적용
-                    keyword_weight = weights.get(keyword, 1.0)
-                    score += keyword_weight
-                    matched_keywords.append(keyword)
-                    
-                    # 키워드 위치에 따른 추가 점수 (앞쪽일수록 높음)
-                    position = user_input_lower.find(keyword)
-                    position_bonus = (1 - position / len(user_input_lower)) * 0.5 if position >= 0 else 0
-                    score += position_bonus
-            
-            if score > 0:
-                scenario_scores[scenario_name] = {
-                    'score': score,
-                    'matched_keywords': matched_keywords,
-                    'keyword_count': len(matched_keywords),
-                    'config': scenario_config
-                }
-        
-        # 점수순 정렬
-        sorted_scenarios = sorted(
-            scenario_scores.items(), 
-            key=lambda x: x[1]['score'], 
-            reverse=True
-        )
-        
-        # 결과 구성
-        if sorted_scenarios:
-            primary = sorted_scenarios[0]
-            alternatives = [s[0] for s in sorted_scenarios[1:3]]  # 상위 2-3개 대안
-            
-            # 신뢰도 계산 (최고 점수와 다음 점수의 차이)
-            confidence = 1.0
-            if len(sorted_scenarios) > 1:
-                score_diff = primary[1]['score'] - sorted_scenarios[1][1]['score']
-                max_score = primary[1]['score']
-                confidence = min(0.95, 0.5 + (score_diff / max_score * 0.45)) if max_score > 0 else 0.5
-            
-            return {
-                'primary_scenario': primary[0],
-                'confidence': round(confidence, 2),
-                'score': primary[1]['score'],
-                'matched_keywords': primary[1]['matched_keywords'],
-                'alternatives': alternatives,
-                'all_scores': {k: v['score'] for k, v in scenario_scores.items()},
-                'reasoning': self._generate_reasoning(primary[0], primary[1]['matched_keywords'], confidence),
-                'spec_files': primary[1]['config'].get('spec_files', []),
-                'config': primary[1]['config'],
-                'default_fallback': 'search'
-            }
-        else:
-            # 매칭 실패시 기본값과 함께 상세 정보 제공
-            return {
-                'primary_scenario': 'search',
-                'confidence': 0.0,
-                'score': 0,
-                'matched_keywords': [],
-                'alternatives': [],
-                'all_scores': {},
-                'reasoning': 'No keywords matched. Using default search scenario.',
-                'spec_files': self.config['scenarios'].get('search', {}).get('spec_files', []),
-                'config': self.config['scenarios'].get('search', {}),
-                'default_fallback': 'search',
-                'is_fallback': True
-            }
-    
-    def _generate_reasoning(self, scenario: str, keywords: List[str], confidence: float) -> str:
-        """매칭 이유 생성"""
-        if confidence > 0.8:
-            strength = "강한"
-        elif confidence > 0.5:
-            strength = "중간"
-        else:
-            strength = "약한"
-        
-        return f"{strength} 일치 - 키워드 {', '.join(keywords)} 발견"
     
     def get_filename(self, scenario: str, title: str, **kwargs) -> Dict[str, Any]:
         """파일명 생성 - 슬러그화 및 안전한 파일명 생성"""
@@ -317,180 +217,131 @@ class ZettelkastenHelper:
         파일 검증 - 기본이 deep validation
         
         mode='deep' (기본): 구조 검증 + validator specs 반환
-        mode='quick': 구조 검증만 (빠른 체크)
+        mode='quick': 구조 검증만
         """
         path = Path(filepath)
         
         if not path.exists():
-            return {
-                'status': 'error',
-                'errors': [f'File not found: {filepath}']
-            }
+            return {'status': 'error', 'error': 'File not found'}
+        
+        # 기본 구조 검증
+        checks = {
+            'exists': True,
+            'has_frontmatter': False,
+            'has_title': False,
+            'has_type': False,
+            'has_created': False
+        }
+        
+        warnings = []
+        errors = []
         
         try:
             content = path.read_text(encoding='utf-8')
         except Exception as e:
-            return {
-                'status': 'error',
-                'errors': [f'Cannot read file: {e}']
-            }
+            return {'status': 'error', 'error': f'Cannot read file: {e}'}
         
-        errors = []
-        warnings = []
-        
-        # Frontmatter 파싱
+        # Frontmatter 검증
         match = re.match(r'^---\n(.*?)\n---\n', content, re.DOTALL)
-        if not match:
-            errors.append('No frontmatter found')
-            return {
-                'status': 'error',
-                'errors': errors
-            }
+        if match:
+            checks['has_frontmatter'] = True
+            try:
+                frontmatter = yaml.safe_load(match.group(1))
+                
+                # 필수 필드 검증
+                if 'title' in frontmatter:
+                    checks['has_title'] = True
+                else:
+                    errors.append("Missing 'title' field")
+                
+                if 'type' in frontmatter:
+                    checks['has_type'] = True
+                else:
+                    errors.append("Missing 'type' field")
+                
+                if 'created' in frontmatter:
+                    checks['has_created'] = True
+                else:
+                    warnings.append("Missing 'created' field")
+                
+            except yaml.YAMLError as e:
+                errors.append(f"Invalid YAML frontmatter: {e}")
+        else:
+            errors.append("No frontmatter found")
         
-        try:
-            frontmatter = yaml.safe_load(match.group(1))
-        except Exception as e:
-            errors.append(f'Invalid YAML frontmatter: {e}')
-            return {
-                'status': 'error',
-                'errors': errors
-            }
+        # 상태 결정
+        if errors:
+            status = 'error'
+        elif warnings:
+            status = 'warning'
+        else:
+            status = 'success'
         
-        # 구조적 검증 (rules.yaml 기반)
-        validation_config = self.config.get('validation', {})
-        
-        # source_chain 검증
-        if validation_config.get('source_chain') == 'required':
-            if 'source' not in frontmatter or not frontmatter['source']:
-                errors.append('Missing required field: source')
-        
-        # MOC 링크 검증
-        moc_links = re.findall(r'\[\[맵-[^\]]+\]\]', content)
-        moc_link_min = validation_config.get('moc_link_min', 0)
-        if moc_link_min > 0 and len(moc_links) < moc_link_min:
-            warnings.append(
-                f'권장: MOC 링크 {moc_link_min}개 이상 추가 (현재 {len(moc_links)}개)'
-            )
-        
-        # 개념 링크 검증
-        concept_links = re.findall(r'\[\[개념-[^\]]+\]\]', content)
-        concept_link_min = validation_config.get('concept_link_min', 0)
-        if concept_link_min > 0 and len(concept_links) < concept_link_min:
-            warnings.append(
-                f'권장: 개념 링크 {concept_link_min}개 이상 추가 (현재 {len(concept_links)}개)'
-            )
-        
-        # 태그 검증
-        if 'tags' not in frontmatter or not frontmatter['tags']:
-            warnings.append('권장: tags 필드 추가')
-        
-        # 기본 결과 구성
         result = {
-            'status': 'success' if not errors else 'error',
+            'status': status,
+            'checks': checks,
             'errors': errors,
-            'warnings': warnings,
-            'checks': {
-                'has_frontmatter': True,
-                'has_source': 'source' in frontmatter,
-                'has_tags': bool(frontmatter.get('tags')),
-                'moc_links': len(moc_links),
-                'concept_links': len(concept_links),
-                'file_size': len(content),
-                'line_count': content.count('\n')
-            }
+            'warnings': warnings
         }
         
-        # Deep validation: validator specs와 context 추가
-        if mode == 'deep':
-            file_type = self._detect_file_type(path)
-            validator_specs = self._get_relevant_validators(file_type)
+        # Deep validation 모드
+        if mode == 'deep' and match:
+            # Validator specs 경로 추가
+            validator_specs = [
+                str(self.docs_root / '90-설정' / 'specs' / 'validators' / 'link-validator.spec.md'),
+                str(self.docs_root / '90-설정' / 'specs' / 'validators' / 'tag-validator.spec.md')
+            ]
             
-            # 모든 링크 추출 및 분류
-            all_links = re.findall(r'\[\[([^\]]+)\]\]', content)
-            link_types = {
-                'moc': [l for l in all_links if l.startswith('맵-')],
-                'concept': [l for l in all_links if l.startswith('개념-')],
-                'literature': [l for l in all_links if l.startswith('정리-')],
-                'fleeting': [l for l in all_links if re.match(r'\d{8}-\d{4}', l)],
-                'other': [l for l in all_links if not any([
-                    l.startswith('맵-'),
-                    l.startswith('개념-'),
-                    l.startswith('정리-'),
-                    re.match(r'\d{8}-\d{4}', l)
-                ])]
+            # 링크 분석
+            links_by_type = {
+                'moc': [],
+                'concept': [],
+                'literature': [],
+                'source': []
             }
             
-            # Frontmatter의 date 객체를 문자열로 변환
-            serializable_frontmatter = {}
-            for key, value in frontmatter.items():
-                if hasattr(value, 'strftime'):
-                    serializable_frontmatter[key] = value.strftime('%Y-%m-%d')
-                elif isinstance(value, list):
-                    serializable_frontmatter[key] = value
-                else:
-                    serializable_frontmatter[key] = str(value) if value is not None else None
+            # MOC 링크
+            moc_links = re.findall(r'\[\[맵-([^\]]+)\]\]', content)
+            links_by_type['moc'] = [f"맵-{m}" for m in moc_links]
+            
+            # 개념 링크
+            concept_links = re.findall(r'\[\[개념-([^\]]+)\]\]', content)
+            links_by_type['concept'] = [f"개념-{c}" for c in concept_links]
+            
+            # 자료정리 링크
+            lit_links = re.findall(r'\[\[정리-([^\]]+)\]\]', content)
+            links_by_type['literature'] = [f"정리-{l}" for l in lit_links]
+            
+            # source 필드
+            if frontmatter and 'source' in frontmatter:
+                source = frontmatter['source']
+                if isinstance(source, str) and source.startswith('[[') and source.endswith(']]'):
+                    links_by_type['source'] = [source[2:-2]]
             
             result['deep'] = {
-                'file_type': file_type,
                 'validator_specs': validator_specs,
                 'context': {
-                    'filepath': str(path),
-                    'filename': path.name,
-                    'relative_path': str(path.relative_to(self.docs_root)),
-                    'frontmatter': serializable_frontmatter,
+                    'frontmatter': frontmatter if match else {},
                     'link_analysis': {
-                        'total': len(all_links),
-                        'by_type': {k: len(v) for k, v in link_types.items()},
-                        'links': link_types
+                        'by_type': {k: len(v) for k, v in links_by_type.items()},
+                        'links': links_by_type
                     }
-                },
-                'suggestions_enabled': True  # Claude가 MOC/개념 제안 가능
+                }
             }
+            
+            # 타입별 검증 규칙 적용
+            file_type = frontmatter.get('type') if match and frontmatter else None
+            if file_type == 'permanent':
+                if not links_by_type['moc']:
+                    warnings.append("권장: MOC 링크 추가")
+                if len(links_by_type['concept']) < 2:
+                    warnings.append("권장: 관련 개념 2개 이상 연결")
+        
+        # 경고/에러 업데이트
+        result['warnings'] = warnings
+        result['errors'] = errors
         
         return result
-    
-    def _detect_file_type(self, path: Path) -> str:
-        """파일명 패턴으로 타입 감지"""
-        name = path.name
-        if name.startswith('개념-'):
-            return 'concept'
-        elif name.startswith('정리-'):
-            return 'literature'
-        elif name.startswith('맵-'):
-            return 'moc'
-        elif name == '_index.md':
-            return 'project'
-        elif re.match(r'\d{8}-\d{4}', name):
-            return 'fleeting'
-        else:
-            return 'unknown'
-    
-    def _get_relevant_validators(self, file_type: str) -> List[str]:
-        """파일 타입별 관련 validator spec 반환"""
-        validators_dir = self.docs_root / '90-설정' / 'specs' / 'validators'
-        
-        if not validators_dir.exists():
-            return []
-        
-        # 모든 파일에 공통 적용
-        specs = []
-        
-        # link-validator는 모든 파일에 적용
-        link_validator = validators_dir / 'link-validator.spec.md'
-        if link_validator.exists():
-            specs.append(str(link_validator))
-        
-        # priority는 참고용
-        priority = validators_dir / 'priority.spec.md'
-        if priority.exists():
-            specs.append(str(priority))
-        
-        # 타입별 추가 validator (향후 확장)
-        # type_validator = validators_dir / f'{file_type}-validator.spec.md'
-        # if type_validator.exists():
-        #     specs.append(str(type_validator))
-        
-        return specs
     
     def list_mocs(self) -> Dict[str, Any]:
         """MOC 목록 반환"""
@@ -552,47 +403,40 @@ class ZettelkastenHelper:
             try:
                 content = file_path.read_text(encoding='utf-8')
                 
+                # Frontmatter 파싱
                 match = re.match(r'^---\n(.*?)\n---\n', content, re.DOTALL)
                 if match:
                     frontmatter = yaml.safe_load(match.group(1))
                     tags = frontmatter.get('tags', [])
                     created = frontmatter.get('created')
-                    if created:
-                        if hasattr(created, 'strftime'):
-                            created = created.strftime('%Y-%m-%d')
-                        elif not isinstance(created, str):
-                            created = str(created)
-                    else:
-                        created = None
                 else:
                     tags = []
                     created = None
                 
-                # 날짜 비교 개선 - None 처리 및 형식 검증
-                if after_date and created:
-                    try:
-                        # 날짜 문자열 검증
-                        if re.match(r'^\d{4}-\d{2}-\d{2}$', after_date) and re.match(r'^\d{4}-\d{2}-\d{2}$', created):
-                            if created < after_date:
-                                continue
-                    except Exception as e:
-                        self.logger.warning(f"Date comparison failed: {e}")
-                        continue
-                
+                # 필터 적용
                 if tag_filters:
                     if not any(tag in tags for tag in tag_filters):
                         continue
                 
-                name_match = re.match(r'개념-\d{8}[a-z]-(.+)\.md', file_path.name)
-                title = name_match.group(1) if name_match else file_path.stem
+                if after_date and created:
+                    if hasattr(created, 'strftime'):
+                        created_str = created.strftime('%Y-%m-%d')
+                    else:
+                        created_str = str(created)
+                    if created_str < after_date:
+                        continue
+                
+                # MOC 링크 찾기
+                moc_links = re.findall(r'\[\[맵-[^\]]+\]\]', content)
                 
                 concepts.append({
                     'filename': file_path.name,
-                    'title': title,
+                    'title': file_path.stem.replace('개념-', ''),
                     'path': str(file_path.relative_to(self.docs_root)),
                     'full_path': str(file_path),
                     'tags': tags,
-                    'created': created
+                    'created': created.strftime('%Y-%m-%d') if hasattr(created, 'strftime') else str(created),
+                    'moc_links': len(moc_links)
                 })
             except Exception:
                 continue
@@ -655,7 +499,7 @@ def main():
     if len(sys.argv) < 2:
         print(json.dumps({
             'error': 'Usage: orchestrator.py <command> [args]',
-            'commands': ['match', 'filename', 'specs', 'validate', 'list_mocs', 'list_concepts', 'preview']
+            'commands': ['scenario_info', 'filename', 'specs', 'validate', 'list_mocs', 'list_concepts', 'preview']
         }))
         sys.exit(1)
     
@@ -670,22 +514,13 @@ def main():
     
     helper = ZettelkastenHelper(str(config_path))
     
-    if command == 'match':
+    if command == 'scenario_info':
         if len(sys.argv) < 3:
-            print(json.dumps({'error': 'Usage: orchestrator.py match <user_input>'}))
+            print(json.dumps({'error': 'Usage: orchestrator.py scenario_info <scenario>'}))
             sys.exit(1)
         
-        user_input = sys.argv[2]
-        result = helper.match_scenario(user_input)
-        print(json.dumps(result, ensure_ascii=False, indent=2))
-    
-    elif command == 'match_advanced':
-        if len(sys.argv) < 3:
-            print(json.dumps({'error': 'Usage: orchestrator.py match_advanced <user_input>'}))
-            sys.exit(1)
-        
-        user_input = sys.argv[2]
-        result = helper.match_scenario_advanced(user_input)
+        scenario = sys.argv[2]
+        result = helper.get_scenario_info(scenario)
         print(json.dumps(result, ensure_ascii=False, indent=2))
     
     elif command == 'filename':
@@ -708,16 +543,13 @@ def main():
         print(json.dumps(result, ensure_ascii=False, indent=2))
     
     elif command == 'validate':
-        # python3 orchestrator.py validate /path/to/file.md          → deep (기본)
-        # python3 orchestrator.py validate /path/to/file.md --quick  → quick
         if len(sys.argv) < 3:
-            print(json.dumps({'error': 'Usage: orchestrator.py validate <filepath> [--quick]'}))
+            print(json.dumps({'error': 'Usage: orchestrator.py validate <filepath> [mode]'}))
             sys.exit(1)
         
         filepath = sys.argv[2]
-        mode = 'quick' if '--quick' in sys.argv else 'deep'
-        
-        result = helper.validate(filepath, mode=mode)
+        mode = sys.argv[3] if len(sys.argv) > 3 else 'deep'
+        result = helper.validate(filepath, mode)
         print(json.dumps(result, ensure_ascii=False, indent=2))
     
     elif command == 'list_mocs':
@@ -725,12 +557,13 @@ def main():
         print(json.dumps(result, ensure_ascii=False, indent=2))
     
     elif command == 'list_concepts':
-        filters = None
+        filters = {}
         if len(sys.argv) > 2:
             try:
                 filters = json.loads(sys.argv[2])
-            except:
+            except json.JSONDecodeError:
                 pass
+        
         result = helper.list_concepts(filters)
         print(json.dumps(result, ensure_ascii=False, indent=2))
     
@@ -745,10 +578,7 @@ def main():
         print(json.dumps(result, ensure_ascii=False, indent=2))
     
     else:
-        print(json.dumps({
-            'error': f'Unknown command: {command}',
-            'available': ['match', 'filename', 'specs', 'validate', 'list_mocs', 'list_concepts', 'preview']
-        }))
+        print(json.dumps({'error': f'Unknown command: {command}'}))
         sys.exit(1)
 
 

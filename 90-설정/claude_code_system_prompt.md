@@ -50,34 +50,65 @@ docs-system/
 
 ### 🔧 실행 순서
 
-#### Step 1: 시나리오 매칭 (Python 도우미 - 고급 버전)
+#### Step 1: 시나리오 판별 (Claude Desktop 직접 판단)
 ```python
-# Desktop Commander로 orchestrator.py 고급 매칭 실행
-result = Desktop_Commander.run_command(
-    "cd /Users/seolmin.kwon/Documents/docs-system/90-설정 && python3 orchestrator.py match_advanced '사용자입력'"
-)
-scenario_data = json.loads(result)
-# {
-#   "primary_scenario": "capture",
-#   "confidence": 0.85,
-#   "matched_keywords": ["메모"],
-#   "alternatives": ["process"],
-#   "reasoning": "강한 일치 - 키워드 메모 발견",
-#   "spec_files": ["scenarios/capture.spec.md", "core/metadata.spec.md"],
-#   "path": "10-수집/즉흥메모"
-# }
+# Claude가 사용자 입력을 분석하여 시나리오 결정
+"""
+시나리오 판별 기준:
 
-# 신뢰도가 낮으면 사용자에게 확인
-if scenario_data['confidence'] < 0.5:
-    print(f"💡 '{scenario_data['primary_scenario']}' 시나리오로 진행하시겠습니까?")
-    print(f"   대안: {', '.join(scenario_data['alternatives'])}")
+1. capture (즉흥메모)
+   - 트리거: "메모", "즉흥", "아이디어", "todo", "생각", "캡처"
+   - 예시: "잘까먹은 메모 남기고 싶어", "todo 추가해줘"
+   - 결과: 10-수집/즉흥메모/YYYYMMDD-HHMM-제목.md
+
+2. process (자료정리)
+   - 트리거: "정리", "요약", "분석", "자료정리", "literature"
+   - 예시: "이 논문 정리해줘", "자료 요약해줘"
+   - 결과: 20-정리/자료정리/정리-YYYYMMDD-제목.md
+
+3. create (핵심개념)
+   - 트리거: "개념", "핵심개념", "permanent", "atomic", "만들어"
+   - 예시: "AI 에이전트 핵심개념 만들어줘"
+   - 결과: 20-정리/핵심개념/개념-YYYYMMDDa-제목.md
+
+4. connect (MOC)
+   - 트리거: "MOC", "맵", "연결", "구조", "관계", "지도"
+   - 예시: "AI 관련 MOC 만들어줘", "개념들 연결해줘"
+   - 결과: 30-연결/맵-제목.md
+
+5. project (프로젝트)
+   - 트리거: "프로젝트", "실행", "구현", "개발"
+   - 예시: "새 프로젝트 시작해줘"
+   - 결과: 40-실행/프로젝트명/_index.md
+
+6. review (리뷰)
+   - 트리거: "리뷰", "검토", "주간", "점검"
+   - 예시: "주간 리뷰 진행해줘"
+   - 읽기 전용 모드
+
+7. search (검색) - 기본 시나리오
+   - 트리거: "검색", "찾기", "조회", "어디", "뭐가"
+   - 명확하지 않은 모든 입력의 기본값
+   - 읽기 전용 모드
+"""
+
+# Claude가 판단한 시나리오
+scenario = analyze_user_input(user_input)  # capture, process, create, connect, project, review, search
+
+# 애매한 경우 사용자 확인
+if not confident_about_scenario:
+    print(f"💡 '{scenario}' 시나리오로 진행하시겠습니까?")
     # 사용자 확인 후 진행
 ```
 
-#### Step 2: Spec 로드 (필요한 것만)
+#### Step 2: Spec 로드 (rules.yaml에서 가져오기)
 ```python
-# orchestrator.py가 반환한 spec 파일만 로드
-for spec_file in scenario_data['spec_files']:
+# rules.yaml에서 시나리오 설정 가져오기
+rules = Filesystem:read_file("/Users/seolmin.kwon/Documents/docs-system/90-설정/rules.yaml")
+scenario_config = rules['scenarios'][scenario]
+
+# 해당 시나리오의 spec 파일 로드
+for spec_file in scenario_config['spec_files']:
     spec_content = Filesystem:read_file(
         f"/Users/seolmin.kwon/Documents/docs-system/90-설정/specs/{spec_file}"
     )
