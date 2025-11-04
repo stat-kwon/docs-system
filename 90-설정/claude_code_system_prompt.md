@@ -101,18 +101,32 @@ if not confident_about_scenario:
     # 사용자 확인 후 진행
 ```
 
-#### Step 2: Spec 로드 (rules.yaml에서 가져오기)
+#### Step 2: Spec 로드 (orchestrator.py로 동적 로드)
 ```python
-# rules.yaml에서 시나리오 설정 가져오기
-rules = Filesystem:read_file("/Users/seolmin.kwon/Documents/docs-system/90-설정/rules.yaml")
-scenario_config = rules['scenarios'][scenario]
+# orchestrator.py로 spec 파일 동적 로드
+result = Desktop_Commander.run_command(
+    f"cd /Users/seolmin.kwon/Documents/docs-system/90-설정 && python3 orchestrator.py load_specs {scenario}"
+)
+specs_data = json.loads(result)
+# {
+#   "scenario": "capture",
+#   "specs_loaded": 2,
+#   "spec_files": ["scenarios/capture.spec.md", "core/metadata.spec.md"],
+#   "total_lines": 122,
+#   "saved_percent": 91,
+#   "spec_content": "## ===== capture.spec.md =====\n\n..."
+# }
 
-# 해당 시나리오의 spec 파일 로드
-for spec_file in scenario_config['spec_files']:
-    spec_content = Filesystem:read_file(
-        f"/Users/seolmin.kwon/Documents/docs-system/90-설정/specs/{spec_file}"
-    )
-    # spec 내용 기반으로 파일 생성 로직 파악
+# 또는 workflow 명령으로 spec 로드와 파일명 생성을 한번에
+result = Desktop_Commander.run_command(
+    f"cd /Users/seolmin.kwon/Documents/docs-system/90-설정 && python3 orchestrator.py workflow {scenario} '{title}'"
+)
+workflow_data = json.loads(result)
+# {
+#   "scenario": "capture",
+#   "specs": { "spec_content": "...", "total_lines": 122, ... },
+#   "filename": { "filename": "20241104-1530-제목.md", "full_path": "..." }
+# }
 ```
 
 #### Step 3: 파일명 생성 (Python 도우미)
@@ -228,15 +242,43 @@ concepts = json.loads(result)['concepts']
 - [[개념-20241101a-지도학습]] - 하위 개념 ⭐
 ```
 
-**4. 첨부파일 자동 처리** ⚠️ 미구현
-- 원문 저장 시 첨부파일을 `/80-보관/첨부파일/YYYYMMDD/`로 정리
-- Obsidian 형식(`![[file.png]]`)을 표준 마크다운으로 변환
+**4. 첨부파일 자동 처리** ✅ 구현 완료
+```python
+# orchestrator.py로 첨부파일 분석
+result = Desktop_Commander.run_command(
+    f"cd ~/Documents/docs-system/90-설정 && python3 orchestrator.py attachments '{filepath}'"
+)
+attachments = json.loads(result)
+
+# orchestrator.py로 자동 처리
+Desktop_Commander.run_command(
+    f"cd ~/Documents/docs-system/90-설정 && python3 orchestrator.py process_attachments '{filepath}'"
+)
+```
+
+**처리 내용:**
+- 이미지 링크 자동 감지 (Markdown, Obsidian, HTML)
+- `/80-보관/첨부파일/YYYYMMDD/`로 파일 이동
+- 링크 자동 업데이트 (`![](../../80-보관/첨부파일/YYYYMMDD/file.png)`)
+- 날짜별 폴더 자동 생성
+
+**예시:**
+```bash
+# 첨부파일 분석 (확인용)
+python3 orchestrator.py attachments 문서.md
+
+# 자동 처리 (미리보기)
+python3 orchestrator.py process_attachments 문서.md --dry-run
+
+# 실제 처리
+python3 orchestrator.py process_attachments 문서.md
+```
 
 **구현 상태:**
 - Suffix 자동 증가: ✅ 완료
 - MOC 제안: ✅ 완료 (Claude 판단)
 - 개념 제안: ✅ 완료 (Claude 판단)
-- 첨부파일 처리: ⚠️ 미구현
+- 첨부파일 처리: ✅ 완료
 
 **문서:**
 - 상세 가이드: `/90-설정/SUGGESTIONS-GUIDE.md`
@@ -334,8 +376,9 @@ python3 orchestrator.py preview "/path/to/file.md" 10
 - 태그, 링크, 총 줄수 포함
 - 빠른 검토용
 
-### 5. 첨부파일 경로 자동 변환 ⚠️ 미구현
-- 자료정리 생성 시 원문의 첨부파일 참조 변환
+### 5. 첨부파일 경로 자동 변환 ✅
+- orchestrator.py의 `attachments` 명령으로 분석
+- orchestrator.py의 `process_attachments` 명령으로 자동 처리
 - Obsidian 형식 `![[file.png]]` → 표준 마크다운 `![](../../80-보관/첨부파일/YYYYMMDD/file.png)`
 
 ---

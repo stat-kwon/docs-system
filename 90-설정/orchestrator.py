@@ -169,6 +169,19 @@ class ZettelkastenHelper:
         text = text.strip('-')
         return text or 'untitled'
     
+    def _make_json_serializable(self, obj: Any) -> Any:
+        """객체를 JSON serializable하게 변환"""
+        if isinstance(obj, dict):
+            return {k: self._make_json_serializable(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [self._make_json_serializable(item) for item in obj]
+        elif hasattr(obj, 'strftime'):  # datetime, date 객체
+            return obj.strftime('%Y-%m-%d')
+        elif isinstance(obj, (str, int, float, bool, type(None))):
+            return obj
+        else:
+            return str(obj)
+    
     def _find_next_suffix(self, scenario: str, date: str, title: str, template: str) -> str:
         """suffix 자동 증가 - 템플릿 기반"""
         rule = self.config['scenarios'][scenario]
@@ -321,7 +334,7 @@ class ZettelkastenHelper:
             result['deep'] = {
                 'validator_specs': validator_specs,
                 'context': {
-                    'frontmatter': frontmatter if match else {},
+                    'frontmatter': self._make_json_serializable(frontmatter) if match else {},
                     'link_analysis': {
                         'by_type': {k: len(v) for k, v in links_by_type.items()},
                         'links': links_by_type
@@ -446,6 +459,294 @@ class ZettelkastenHelper:
             'count': len(concepts)
         }
     
+    def load_specs_for_scenario(self, scenario: str) -> Dict[str, Any]:
+        """
+        시나리오별 spec 파일 동적 로드
+        loader.sh의 기능을 Python으로 구현
+        """
+        try:
+            # 시나리오 설정 가져오기
+            scenario_config = self.config['scenarios'].get(scenario)
+            if not scenario_config:
+                # 기본 시나리오 찾기
+                default_scenario = 'search'
+                for name, config in self.config['scenarios'].items():
+                    if config.get('is_default', False):
+                        default_scenario = name
+                        break
+                
+                self.logger.warning(f"Unknown scenario '{scenario}', using default '{default_scenario}'")
+                scenario_config = self.config['scenarios'][default_scenario]
+                scenario = default_scenario
+            
+            # spec 파일 목록 가져오기
+            spec_files = scenario_config.get('spec_files', [])
+            
+            # spec 로드 및 병합
+            loaded_specs = []
+            merged_content = ""
+            total_lines = 0
+            
+            for spec_file in spec_files:
+                spec_path = self.docs_root / '90-설정' / 'specs' / spec_file
+                
+                if spec_path.exists():
+                    try:
+                        content = spec_path.read_text(encoding='utf-8')
+                        lines = len(content.splitlines())
+                        
+                        loaded_specs.append({
+                            'filename': spec_file,
+                            'path': str(spec_path),
+                            'lines': lines
+                        })
+                        
+                        # spec 내용 병합
+                        merged_content += f"\n## ===== {spec_file} =====\n\n"
+                        merged_content += content
+                        merged_content += "\n"
+                        
+                        total_lines += lines
+                        self.logger.info(f"Loaded spec: {spec_file} ({lines} lines)")
+                        
+                    except Exception as e:
+                        self.logger.error(f"Failed to load spec {spec_file}: {e}")
+                else:
+                    self.logger.warning(f"Spec file not found: {spec_file}")
+            
+            # 결과 구성
+            result = {
+                'scenario': scenario,
+                'description': scenario_config.get('description', ''),
+                'specs_loaded': len(loaded_specs),
+                'spec_files': [s['filename'] for s in loaded_specs],
+                'spec_details': loaded_specs,
+                'total_lines': total_lines,
+                'original_lines': 1392,  # 기존 monolithic prompt 크기
+                'saved_percent': round((1392 - total_lines) * 100 / 1392) if total_lines > 0 else 0,
+                'spec_content': merged_content
+            }
+            
+            self.logger.info(f"Loaded {len(loaded_specs)} specs for scenario '{scenario}' "
+                           f"({total_lines} lines, {result['saved_percent']}% saved)")
+            
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"Error loading specs: {e}")
+            return {'error': str(e)}
+    
+    def workflow(self, scenario: str, title: str = None, **kwargs) -> Dict[str, Any]:
+        """
+        통합 워크플로우 실행
+        spec 로드 + 파일명 생성을 한 번에 처리
+        """
+        try:
+            result = {'scenario': scenario}
+            
+            # 1. Spec 로드
+            specs = self.load_specs_for_scenario(scenario)
+            if 'error' in specs:
+                return specs
+            result['specs'] = specs
+            
+            # 2. 파일명 생성 (title이 제공된 경우)
+            if title:
+                filename_info = self.get_filename(scenario, title, **kwargs)
+                if 'error' in filename_info:
+                    result['filename_error'] = filename_info['error']
+                else:
+                    result['filename'] = filename_info
+            else:
+                result['filename'] = None
+            
+            # 3. 추가 정보
+            result['timestamp'] = datetime.now().isoformat()
+            result['auto_execute'] = self.config['scenarios'][scenario].get('auto_execute', False)
+            result['validation_rules'] = self.config['scenarios'][scenario].get('validation', [])
+            
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"Error in workflow: {e}")
+            return {'error': str(e)}
+    
+    def execute_attachments(self, filepath: str, dry_run: bool = False) -> Dict[str, Any]:
+        """
+        첨부파일 처리 실행 (process_attachments.sh의 기능 통합)
+        - 파일 분석
+        - 디렉토리 생성
+        - 파일 이동
+        - 링크 업데이트
+        """
+        try:
+            file_path = Path(filepath)
+            if not file_path.exists():
+                return {'error': f'File not found: {filepath}'}
+            
+            # 1. 파일 내용 읽기
+            content = file_path.read_text(encoding='utf-8')
+            
+            # 2. 첨부파일 분석
+            analysis = self.process_attachments(content, filepath)
+            if 'error' in analysis:
+                return analysis
+            
+            # 첨부파일이 없으면 종료
+            if analysis['attachments_found'] == 0:
+                return {
+                    'success': True,
+                    'message': 'No attachments found in the file',
+                    'attachments_found': 0
+                }
+            
+            # Dry-run 모드
+            if dry_run:
+                return {
+                    'success': True,
+                    'dry_run': True,
+                    'analysis': analysis,
+                    'actions': {
+                        'create_dir': analysis.get('commands', {}).get('create_dir', ''),
+                        'move_files': analysis.get('commands', {}).get('move_files', []),
+                        'update_links': analysis.get('updated_links', {})
+                    }
+                }
+            
+            # 3. 실제 실행
+            results = {
+                'success': True,
+                'executed': [],
+                'failed': [],
+                'updated_links': []
+            }
+            
+            # 디렉토리 생성
+            if 'suggestions' in analysis and analysis['suggestions']:
+                first_suggestion = analysis['suggestions'][0]
+                attach_dir = Path(first_suggestion['full_path']).parent
+                
+                if not attach_dir.exists():
+                    attach_dir.mkdir(parents=True, exist_ok=True)
+                    results['executed'].append(f'Created directory: {attach_dir}')
+                    self.logger.info(f"Created directory: {attach_dir}")
+            
+            # 파일 이동
+            for suggestion in analysis.get('suggestions', []):
+                original = Path(suggestion['original'])
+                target = Path(suggestion['full_path'])
+                
+                if original.exists():
+                    try:
+                        import shutil
+                        shutil.move(str(original), str(target))
+                        results['executed'].append(f'Moved: {original} -> {target}')
+                        self.logger.info(f"Moved file: {original} -> {target}")
+                    except Exception as e:
+                        results['failed'].append(f'Failed to move {original}: {e}')
+                        self.logger.error(f"Failed to move {original}: {e}")
+                else:
+                    results['failed'].append(f'File not found: {original}')
+            
+            # 링크 업데이트
+            if analysis.get('updated_links') and not dry_run:
+                updated_content = content
+                for original, replacement in analysis['updated_links'].items():
+                    updated_content = updated_content.replace(original, replacement)
+                    results['updated_links'].append(f'{original} -> {replacement}')
+                
+                # 파일 저장
+                file_path.write_text(updated_content, encoding='utf-8')
+                results['executed'].append(f'Updated links in {filepath}')
+                self.logger.info(f"Updated links in {filepath}")
+            
+            return results
+            
+        except Exception as e:
+            self.logger.error(f"Error executing attachments: {e}")
+            return {'error': str(e)}
+    
+    def process_attachments(self, content: str, source_file: str = None) -> Dict[str, Any]:
+        """
+        컨텐츠에서 첨부파일 링크를 찾아 처리
+        - 이미지 파일 감지 및 경로 변환
+        - 첨부파일 디렉토리 생성
+        - 파일 이동 제안
+        """
+        try:
+            # 첨부파일 설정 로드
+            attach_config = self.config.get('attachments', {})
+            base_path = attach_config.get('base_path', '80-보관/첨부파일')
+            organize_by = attach_config.get('organize_by', 'date')
+            date_format = attach_config.get('date_format', '%Y%m%d')
+            
+            # 현재 날짜로 디렉토리 경로 생성
+            today = datetime.now().strftime(date_format)
+            attach_dir = self.docs_root / base_path / today
+            
+            # 이미지 링크 패턴 찾기
+            # Markdown 이미지: ![alt](path)
+            # Obsidian 임베드: ![[filename]]
+            # HTML 이미지: <img src="path">
+            patterns = [
+                r'!\[([^\]]*)\]\(([^)]+)\)',  # Markdown
+                r'!\[\[([^\]]+)\]\]',  # Obsidian embed
+                r'<img[^>]+src=["\']([^"\'\']+)["\']'  # HTML
+            ]
+            
+            attachments_found = []
+            suggestions = []
+            
+            for pattern in patterns:
+                matches = re.findall(pattern, content)
+                for match in matches:
+                    if isinstance(match, tuple):
+                        # Markdown 패턴의 경우 (alt_text, path)
+                        if len(match) == 2:
+                            file_path = match[1]
+                        else:
+                            file_path = match[0]
+                    else:
+                        file_path = match
+                    
+                    # 이미지 파일 확장자 체크
+                    if any(file_path.lower().endswith(ext) for ext in ['.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp']):
+                        attachments_found.append(file_path)
+                        
+                        # 절대 경로나 URL이 아닌 경우에만 처리
+                        if not file_path.startswith(('http://', 'https://', '/')):
+                            # 새 경로 제안
+                            filename = Path(file_path).name
+                            new_path = f"../../{base_path}/{today}/{filename}"
+                            
+                            suggestions.append({
+                                'original': file_path,
+                                'suggested': new_path,
+                                'full_path': str(attach_dir / filename)
+                            })
+            
+            # 디렉토리 생성 제안
+            result = {
+                'attachments_found': len(attachments_found),
+                'attachments': attachments_found,
+                'suggestions': suggestions
+            }
+            
+            if suggestions:
+                result['commands'] = {
+                    'create_dir': f"mkdir -p {attach_dir}",
+                    'move_files': [f"mv '{s['original']}' '{s['full_path']}'" for s in suggestions]
+                }
+                result['updated_links'] = {}
+                for s in suggestions:
+                    result['updated_links'][s['original']] = s['suggested']
+            
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"Error processing attachments: {e}")
+            return {'error': str(e)}
+    
     def get_file_preview(self, filepath: str, lines: int = 5) -> Dict[str, Any]:
         """파일 미리보기"""
         path = Path(filepath)
@@ -499,7 +800,7 @@ def main():
     if len(sys.argv) < 2:
         print(json.dumps({
             'error': 'Usage: orchestrator.py <command> [args]',
-            'commands': ['scenario_info', 'filename', 'specs', 'validate', 'list_mocs', 'list_concepts', 'preview']
+            'commands': ['scenario_info', 'filename', 'specs', 'validate', 'list_mocs', 'list_concepts', 'preview', 'attachments', 'load_specs', 'workflow', 'process_attachments']
         }))
         sys.exit(1)
     
@@ -575,6 +876,63 @@ def main():
         filepath = sys.argv[2]
         lines = int(sys.argv[3]) if len(sys.argv) > 3 else 5
         result = helper.get_file_preview(filepath, lines)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    
+    elif command == 'attachments':
+        if len(sys.argv) < 3:
+            print(json.dumps({'error': 'Usage: orchestrator.py attachments <filepath>'}))
+            sys.exit(1)
+        
+        filepath = sys.argv[2]
+        
+        # 파일 읽기
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                content = f.read()
+            result = helper.process_attachments(content, filepath)
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        except Exception as e:
+            print(json.dumps({'error': f'Failed to process file: {str(e)}'}))
+            sys.exit(1)
+    
+    elif command == 'load_specs':
+        if len(sys.argv) < 3:
+            print(json.dumps({'error': 'Usage: orchestrator.py load_specs <scenario>'}))
+            sys.exit(1)
+        
+        scenario = sys.argv[2]
+        result = helper.load_specs_for_scenario(scenario)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    
+    elif command == 'workflow':
+        if len(sys.argv) < 3:
+            print(json.dumps({'error': 'Usage: orchestrator.py workflow <scenario> [title]'}))
+            sys.exit(1)
+        
+        scenario = sys.argv[2]
+        title = sys.argv[3] if len(sys.argv) > 3 else None
+        
+        # 추가 파라미터 처리 (예: project_name)
+        kwargs = {}
+        if len(sys.argv) > 4:
+            # 간단한 key=value 파싱
+            for arg in sys.argv[4:]:
+                if '=' in arg:
+                    key, value = arg.split('=', 1)
+                    kwargs[key] = value
+        
+        result = helper.workflow(scenario, title, **kwargs)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    
+    elif command == 'process_attachments':
+        if len(sys.argv) < 3:
+            print(json.dumps({'error': 'Usage: orchestrator.py process_attachments <filepath> [--dry-run]'}))
+            sys.exit(1)
+        
+        filepath = sys.argv[2]
+        dry_run = '--dry-run' in sys.argv or '--dry' in sys.argv
+        
+        result = helper.execute_attachments(filepath, dry_run)
         print(json.dumps(result, ensure_ascii=False, indent=2))
     
     else:
