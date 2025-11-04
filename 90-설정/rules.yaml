@@ -6,7 +6,7 @@ docs_root: "/Users/seolmin.kwon/Documents/docs-system"
 scenarios:
   capture:
     keywords: ["저장", "캡처", "메모", "기록", "capture"]
-    filename_template: "{date:%Y%m%d-%H%M}-{title}.md"
+    filename_template: "{date}-{time}-{title}.md"
     path: "10-수집/즉흥메모"
     spec_files:
       - "scenarios/capture.spec.md"
@@ -18,7 +18,7 @@ scenarios:
     
   process:
     keywords: ["정리", "요약", "추출", "process"]
-    filename_template: "정리-{date:%Y%m%d}-{title}.md"
+    filename_template: "정리-{date}-{title}.md"
     path: "20-정리/자료정리"
     spec_files:
       - "scenarios/process.spec.md"
@@ -30,7 +30,7 @@ scenarios:
     
   create:
     keywords: ["개념", "영구", "카드", "permanent", "create"]
-    filename_template: "개념-{date:%Y%m%d}{suffix}-{title}.md"
+    filename_template: "개념-{date}{suffix}-{title}.md"
     path: "20-정리/핵심개념"
     spec_files:
       - "scenarios/create.spec.md"

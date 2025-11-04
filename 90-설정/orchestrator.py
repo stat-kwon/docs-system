@@ -1,28 +1,71 @@
 #!/usr/bin/env python3
 """
-Zettelkasten 도우미 v2 - Deep Validation by Default
+Zettelkasten 도우미 v3 - 환경 독립성과 강화된 에러 처리
 
 주요 변경사항:
-- validate() 기본 동작이 deep validation
-- --quick 옵션으로 basic만 수행 가능
-- validator specs를 context로 반환하여 Claude가 활용
+- 환경 변수 기반 경로 설정 (DOCS_HOME)
+- 통합 로깅 시스템
+- 시나리오별 검증 로직
+- 개선된 파일명 생성 (슬러그화)
+- 유연한 프런트매터 파싱
 """
 
+import os
 import yaml
 import json
 import sys
 import re
+import logging
+import unicodedata
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 
 class ZettelkastenHelper:
-    """경량 도우미 클래스"""
+    """경량 도우미 클래스 - 환경 독립적 버전"""
     
     def __init__(self, config_path: str):
-        with open(config_path, 'r', encoding='utf-8') as f:
-            self.config = yaml.safe_load(f)
-        self.docs_root = Path(self.config['docs_root'])
+        # 로깅 설정
+        self._setup_logging()
+        
+        # 설정 로드
+        try:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                self.config = yaml.safe_load(f)
+            self.logger.info(f"Configuration loaded from {config_path}")
+        except Exception as e:
+            if hasattr(self, 'logger'):
+                self.logger.error(f"Failed to load config: {e}")
+            raise
+        
+        # 환경 변수 우선, 없으면 config, 최종적으로 현재 디렉토리
+        docs_root = os.environ.get('DOCS_HOME')
+        if docs_root:
+            self.docs_root = Path(docs_root)
+            self.logger.info(f"Using DOCS_HOME from environment: {self.docs_root}")
+        elif 'docs_root' in self.config:
+            self.docs_root = Path(self.config['docs_root'])
+            self.logger.info(f"Using docs_root from config: {self.docs_root}")
+        else:
+            # 현재 스크립트 위치 기준으로 상위 디렉토리 사용
+            self.docs_root = Path(__file__).parent.parent
+            self.logger.info(f"Using default docs_root: {self.docs_root}")
+        
+        # 경로 검증
+        if not self.docs_root.exists():
+            self.logger.warning(f"docs_root does not exist: {self.docs_root}")
+    
+    def _setup_logging(self):
+        """로깅 시스템 설정"""
+        log_level = os.environ.get('LOG_LEVEL', 'INFO')
+        logging.basicConfig(
+            level=getattr(logging, log_level.upper()),
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+            handlers=[
+                logging.StreamHandler(sys.stderr)  # stderr로 출력해 stdout과 분리
+            ]
+        )
+        self.logger = logging.getLogger(__name__)
     
     def match_scenario(self, user_input: str) -> Dict[str, Any]:
         """시나리오 매칭"""
@@ -46,28 +89,50 @@ class ZettelkastenHelper:
         }
     
     def get_filename(self, scenario: str, title: str, **kwargs) -> Dict[str, Any]:
-        """파일명 생성"""
+        """파일명 생성 - 슬러그화 및 안전한 파일명 생성"""
         if scenario not in self.config['scenarios']:
+            self.logger.error(f"Unknown scenario: {scenario}")
             return {'error': f'Unknown scenario: {scenario}'}
         
         rule = self.config['scenarios'][scenario]
         template = rule.get('filename_template')
         
         if not template:
+            self.logger.error(f"No filename template for scenario: {scenario}")
             return {'error': f'No filename template for scenario: {scenario}'}
         
+        # 제목 슬러그화 (공백, 특수문자 처리)
+        safe_title = self._slugify(title)
+        self.logger.debug(f"Title slugified: '{title}' -> '{safe_title}'")
+        
         # 파라미터 준비
-        params = {'title': title}
-        params['date'] = kwargs.get('date', datetime.now())
+        params = {'title': safe_title}
         
+        # 날짜/시간 처리
+        now = kwargs.get('date', datetime.now())
+        if hasattr(now, 'strftime'):
+            params['date'] = now.strftime('%Y%m%d')
+            params['time'] = now.strftime('%H%M')
+            params['datetime'] = now.strftime('%Y%m%d-%H%M')
+        else:
+            params['date'] = str(now)[:10].replace('-', '')
+            params['time'] = '0000'
+            params['datetime'] = params['date'] + '-0000'
+        
+        # 프로젝트명 처리
         if 'project_name' in kwargs:
-            params['project_name'] = kwargs['project_name']
+            params['project_name'] = self._slugify(kwargs['project_name'])
         
+        # suffix 처리
         if rule.get('needs_suffix'):
-            params['suffix'] = self._find_next_suffix(scenario, params['date'], title)
+            params['suffix'] = self._find_next_suffix(scenario, params['date'], safe_title, template)
         
         # 파일명 생성
-        filename = template.format(**params)
+        try:
+            filename = template.format(**params)
+        except KeyError as e:
+            self.logger.error(f"Missing template parameter: {e}")
+            return {'error': f'Missing template parameter: {e}'}
         
         # 경로 생성
         path_template = rule['path']
@@ -78,30 +143,59 @@ class ZettelkastenHelper:
         
         full_path = self.docs_root / path / filename
         
+        self.logger.info(f"Generated filename: {filename} at {path}")
+        
         return {
             'filename': filename,
             'template': template,
             'path': path,
             'full_path': str(full_path),
-            'needs_suffix': rule.get('needs_suffix', False)
+            'needs_suffix': rule.get('needs_suffix', False),
+            'safe_title': safe_title
         }
     
-    def _find_next_suffix(self, scenario: str, date: datetime, title: str) -> str:
-        """suffix 자동 증가"""
+    def _slugify(self, text: str) -> str:
+        """텍스트를 파일명으로 안전하게 변환"""
+        # Unicode 정규화
+        text = unicodedata.normalize('NFKC', text)
+        # 공백을 하이픈으로
+        text = re.sub(r'\s+', '-', text)
+        # 파일명에 안전하지 않은 문자 제거
+        text = re.sub(r'[^\w\-가-힣ㄱ-ㅎㅏ-ㅣ]', '', text)
+        # 연속된 하이픈 제거
+        text = re.sub(r'-+', '-', text)
+        # 앞뒤 하이픈 제거
+        text = text.strip('-')
+        return text or 'untitled'
+    
+    def _find_next_suffix(self, scenario: str, date: str, title: str, template: str) -> str:
+        """suffix 자동 증가 - 템플릿 기반"""
         rule = self.config['scenarios'][scenario]
         path = self.docs_root / rule['path']
         
         if not path.exists():
+            self.logger.debug(f"Path does not exist, using suffix 'a': {path}")
             return 'a'
         
-        date_str = date.strftime("%Y%m%d")
         suffix_chars = self.config.get('suffix', {}).get('chars', 'abcdefghij')
         
+        # 템플릿에서 suffix 위치 찾기
         for suffix in suffix_chars:
-            test_name = f"개념-{date_str}{suffix}-{title}.md"
+            # 템플릿 기반으로 테스트 파일명 생성
+            test_params = {'date': date, 'title': title, 'suffix': suffix}
+            try:
+                test_name = template.format(**test_params)
+            except KeyError:
+                # 템플릿 파싱 실패 시 기본 패턴 사용
+                test_name = f"개념-{date}{suffix}-{title}.md"
+                self.logger.warning(f"Template parsing failed, using default pattern: {test_name}")
+            
             if not (path / test_name).exists():
+                self.logger.debug(f"Found available suffix: {suffix}")
                 return suffix
         
+        # 모든 suffix가 사용된 경우
+        self.logger.warning(f"All suffixes used for {date}-{title}, using 'z'")
         return 'z'
     
     def get_specs(self, scenario: str) -> Dict[str, Any]:
@@ -361,17 +455,28 @@ class ZettelkastenHelper:
                 if match:
                     frontmatter = yaml.safe_load(match.group(1))
                     tags = frontmatter.get('tags', [])
-                    created = frontmatter.get('created', '')
-                    if hasattr(created, 'strftime'):
-                        created = created.strftime('%Y-%m-%d')
-                    elif not isinstance(created, str):
-                        created = str(created)
+                    created = frontmatter.get('created')
+                    if created:
+                        if hasattr(created, 'strftime'):
+                            created = created.strftime('%Y-%m-%d')
+                        elif not isinstance(created, str):
+                            created = str(created)
+                    else:
+                        created = None
                 else:
                     tags = []
-                    created = ''
+                    created = None
                 
-                if after_date and created < after_date:
-                    continue
+                # 날짜 비교 개선 - None 처리 및 형식 검증
+                if after_date and created:
+                    try:
+                        # 날짜 문자열 검증
+                        if re.match(r'^\d{4}-\d{2}-\d{2}$', after_date) and re.match(r'^\d{4}-\d{2}-\d{2}$', created):
+                            if created < after_date:
+                                continue
+                    except Exception as e:
+                        self.logger.warning(f"Date comparison failed: {e}")
+                        continue
                 
                 if tag_filters:
                     if not any(tag in tags for tag in tag_filters):
