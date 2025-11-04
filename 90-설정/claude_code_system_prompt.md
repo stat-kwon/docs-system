@@ -50,18 +50,28 @@ docs-system/
 
 ### 🔧 실행 순서
 
-#### Step 1: 시나리오 매칭 (Python 도우미)
+#### Step 1: 시나리오 매칭 (Python 도우미 - 고급 버전)
 ```python
-# Desktop Commander로 orchestrator.py 실행
+# Desktop Commander로 orchestrator.py 고급 매칭 실행
 result = Desktop_Commander.run_command(
-    "cd /Users/seolmin.kwon/Documents/docs-system/90-설정 && python3 orchestrator.py match '사용자입력'"
+    "cd /Users/seolmin.kwon/Documents/docs-system/90-설정 && python3 orchestrator.py match_advanced '사용자입력'"
 )
 scenario_data = json.loads(result)
 # {
-#   "scenario": "capture",
+#   "primary_scenario": "capture",
+#   "confidence": 0.85,
+#   "matched_keywords": ["메모"],
+#   "alternatives": ["process"],
+#   "reasoning": "강한 일치 - 키워드 메모 발견",
 #   "spec_files": ["scenarios/capture.spec.md", "core/metadata.spec.md"],
 #   "path": "10-수집/즉흥메모"
 # }
+
+# 신뢰도가 낮으면 사용자에게 확인
+if scenario_data['confidence'] < 0.5:
+    print(f"💡 '{scenario_data['primary_scenario']}' 시나리오로 진행하시겠습니까?")
+    print(f"   대안: {', '.join(scenario_data['alternatives'])}")
+    # 사용자 확인 후 진행
 ```
 
 #### Step 2: Spec 로드 (필요한 것만)

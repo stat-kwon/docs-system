@@ -41,36 +41,71 @@ log_warning() {
     echo -e "${YELLOW}⚠ Warning: $1${NC}" >&2
 }
 
-# Orchestrator를 통한 시나리오 식별
+# Orchestrator를 통한 시나리오 식별 (고급 버전 사용)
 identify_scenario_via_orchestrator() {
     local input="$1"
+    local use_advanced="${2:-true}"  # 기본값: 고급 모드 사용
     
     if [[ ! -f "$ORCHESTRATOR" ]]; then
         log_error "Orchestrator not found: $ORCHESTRATOR"
         return 1
     fi
     
-    # orchestrator.py match 명령 실행
+    # 명령 선택 (advanced 또는 기본)
+    local cmd="match"
+    if [[ "$use_advanced" == "true" ]]; then
+        cmd="match_advanced"
+    fi
+    
+    # orchestrator.py 실행
     local result
-    result=$(python3 "$ORCHESTRATOR" match "$input" 2>/dev/null)
+    result=$(python3 "$ORCHESTRATOR" "$cmd" "$input" 2>/dev/null)
     
     if [[ $? -ne 0 ]]; then
         log_error "Failed to identify scenario via orchestrator"
-        echo "general"
+        echo "search"  # fallback to search instead of general
         return 1
     fi
     
-    # JSON 결과에서 scenario 추출 (jq가 없을 경우 대비)
-    if command -v jq &> /dev/null; then
-        scenario=$(echo "$result" | jq -r '.scenario // "general"')
+    # 고급 모드에서는 상세 정보 출력
+    if [[ "$use_advanced" == "true" ]]; then
+        # JSON 결과에서 primary_scenario 및 기타 정보 추출
+        if command -v jq &> /dev/null; then
+            scenario=$(echo "$result" | jq -r '.primary_scenario // "search"')
+            confidence=$(echo "$result" | jq -r '.confidence // 0')
+            alternatives=$(echo "$result" | jq -r '.alternatives[]?' 2>/dev/null | tr '\n' ', ' | sed 's/,$//')
+            reasoning=$(echo "$result" | jq -r '.reasoning // ""')
+            
+            # 상세 정보 출력 (stderr로)
+            echo -e "${BLUE}ℹ Scenario Analysis:${NC}" >&2
+            echo "  Primary: $scenario (confidence: $confidence)" >&2
+            if [[ -n "$alternatives" ]]; then
+                echo "  Alternatives: $alternatives" >&2
+            fi
+            if [[ -n "$reasoning" ]]; then
+                echo "  Reasoning: $reasoning" >&2
+            fi
+        else
+            # 간단한 grep 기반 파싱
+            scenario=$(echo "$result" | grep -o '"primary_scenario": "[^"]*"' | cut -d'"' -f4)
+            if [[ -z "$scenario" || "$scenario" == "null" ]]; then
+                scenario="search"
+            fi
+        fi
     else
-        # 간단한 grep 기반 파싱
-        scenario=$(echo "$result" | grep -o '"scenario": "[^"]*"' | cut -d'"' -f4)
-        if [[ -z "$scenario" || "$scenario" == "null" ]]; then
-            scenario="general"
+        # 기본 모드
+        if command -v jq &> /dev/null; then
+            scenario=$(echo "$result" | jq -r '.scenario // "search"')
+        else
+            scenario=$(echo "$result" | grep -o '"scenario": "[^"]*"' | cut -d'"' -f4)
+            if [[ -z "$scenario" || "$scenario" == "null" ]]; then
+                scenario="search"
+            fi
         fi
     fi
     
+    # 시나리오 반환 및 환경변수 설정
+    export DOCS_SCENARIO_RESULT="$result"  # Claude Desktop이 참고할 수 있도록
     echo "$scenario"
 }
 
@@ -234,18 +269,20 @@ print_loaded_specs() {
 # 메인 실행 함수
 main() {
     local user_input="${1:-}"
+    local use_advanced="${2:-true}"  # 기본값: 고급 모드 사용
     
     if [[ -z "$user_input" ]]; then
-        echo "Usage: $0 \"사용자 입력\"" >&2
+        echo "Usage: $0 \"사용자 입력\" [advanced]" >&2
         echo "Example: $0 \"AI 에이전트 관련 핵심개념 만들어줘\"" >&2
+        echo "         $0 \"AI 에이전트 관련 핵심개념 만들어줘\" false  # 기본 모드" >&2
         exit 1
     fi
     
     echo "🔍 Analyzing input: \"$user_input\"" >&2
     echo "" >&2
     
-    # Orchestrator를 통한 시나리오 식별
-    DOCS_SCENARIO=$(identify_scenario_via_orchestrator "$user_input")
+    # Orchestrator를 통한 시나리오 식별 (고급 모드 기본 사용)
+    DOCS_SCENARIO=$(identify_scenario_via_orchestrator "$user_input" "$use_advanced")
     export DOCS_SCENARIO
     
     echo "📎 Identified scenario: $DOCS_SCENARIO" >&2

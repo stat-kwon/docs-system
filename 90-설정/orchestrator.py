@@ -68,7 +68,7 @@ class ZettelkastenHelper:
         self.logger = logging.getLogger(__name__)
     
     def match_scenario(self, user_input: str) -> Dict[str, Any]:
-        """시나리오 매칭"""
+        """시나리오 매칭 - 단순 버전 (하위 호환성)"""
         user_input_lower = user_input.lower()
         
         for scenario_name, scenario_config in self.config['scenarios'].items():
@@ -83,10 +83,111 @@ class ZettelkastenHelper:
                     'validation': scenario_config.get('validation', [])
                 }
         
+        # 매칭 실패시 기본 시나리오 반환
         return {
-            'scenario': None,
-            'error': 'No matching scenario found'
+            'scenario': 'search',  # 기본값을 None에서 'search'로 변경
+            'config': self.config['scenarios'].get('search', {}),
+            'spec_files': self.config['scenarios'].get('search', {}).get('spec_files', []),
+            'path': '',
+            'auto_execute': False,
+            'validation': [],
+            'fallback': True,
+            'message': 'No exact match found, defaulting to search'
         }
+    
+    def match_scenario_advanced(self, user_input: str) -> Dict[str, Any]:
+        """
+        고급 시나리오 매칭 - 가중치 기반 점수 계산
+        Claude Desktop이 최종 판단할 수 있도록 상세 정보 제공
+        """
+        user_input_lower = user_input.lower()
+        scenario_scores = {}
+        
+        # 각 시나리오별 점수 계산
+        for scenario_name, scenario_config in self.config['scenarios'].items():
+            score = 0
+            matched_keywords = []
+            
+            keywords = scenario_config.get('keywords', [])
+            weights = scenario_config.get('keyword_weights', {})
+            
+            for keyword in keywords:
+                if keyword in user_input_lower:
+                    # 기본 점수 1점, 가중치가 있으면 적용
+                    keyword_weight = weights.get(keyword, 1.0)
+                    score += keyword_weight
+                    matched_keywords.append(keyword)
+                    
+                    # 키워드 위치에 따른 추가 점수 (앞쪽일수록 높음)
+                    position = user_input_lower.find(keyword)
+                    position_bonus = (1 - position / len(user_input_lower)) * 0.5 if position >= 0 else 0
+                    score += position_bonus
+            
+            if score > 0:
+                scenario_scores[scenario_name] = {
+                    'score': score,
+                    'matched_keywords': matched_keywords,
+                    'keyword_count': len(matched_keywords),
+                    'config': scenario_config
+                }
+        
+        # 점수순 정렬
+        sorted_scenarios = sorted(
+            scenario_scores.items(), 
+            key=lambda x: x[1]['score'], 
+            reverse=True
+        )
+        
+        # 결과 구성
+        if sorted_scenarios:
+            primary = sorted_scenarios[0]
+            alternatives = [s[0] for s in sorted_scenarios[1:3]]  # 상위 2-3개 대안
+            
+            # 신뢰도 계산 (최고 점수와 다음 점수의 차이)
+            confidence = 1.0
+            if len(sorted_scenarios) > 1:
+                score_diff = primary[1]['score'] - sorted_scenarios[1][1]['score']
+                max_score = primary[1]['score']
+                confidence = min(0.95, 0.5 + (score_diff / max_score * 0.45)) if max_score > 0 else 0.5
+            
+            return {
+                'primary_scenario': primary[0],
+                'confidence': round(confidence, 2),
+                'score': primary[1]['score'],
+                'matched_keywords': primary[1]['matched_keywords'],
+                'alternatives': alternatives,
+                'all_scores': {k: v['score'] for k, v in scenario_scores.items()},
+                'reasoning': self._generate_reasoning(primary[0], primary[1]['matched_keywords'], confidence),
+                'spec_files': primary[1]['config'].get('spec_files', []),
+                'config': primary[1]['config'],
+                'default_fallback': 'search'
+            }
+        else:
+            # 매칭 실패시 기본값과 함께 상세 정보 제공
+            return {
+                'primary_scenario': 'search',
+                'confidence': 0.0,
+                'score': 0,
+                'matched_keywords': [],
+                'alternatives': [],
+                'all_scores': {},
+                'reasoning': 'No keywords matched. Using default search scenario.',
+                'spec_files': self.config['scenarios'].get('search', {}).get('spec_files', []),
+                'config': self.config['scenarios'].get('search', {}),
+                'default_fallback': 'search',
+                'is_fallback': True
+            }
+    
+    def _generate_reasoning(self, scenario: str, keywords: List[str], confidence: float) -> str:
+        """매칭 이유 생성"""
+        if confidence > 0.8:
+            strength = "강한"
+        elif confidence > 0.5:
+            strength = "중간"
+        else:
+            strength = "약한"
+        
+        return f"{strength} 일치 - 키워드 {', '.join(keywords)} 발견"
     
     def get_filename(self, scenario: str, title: str, **kwargs) -> Dict[str, Any]:
         """파일명 생성 - 슬러그화 및 안전한 파일명 생성"""
@@ -576,6 +677,15 @@ def main():
         
         user_input = sys.argv[2]
         result = helper.match_scenario(user_input)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    
+    elif command == 'match_advanced':
+        if len(sys.argv) < 3:
+            print(json.dumps({'error': 'Usage: orchestrator.py match_advanced <user_input>'}))
+            sys.exit(1)
+        
+        user_input = sys.argv[2]
+        result = helper.match_scenario_advanced(user_input)
         print(json.dumps(result, ensure_ascii=False, indent=2))
     
     elif command == 'filename':
