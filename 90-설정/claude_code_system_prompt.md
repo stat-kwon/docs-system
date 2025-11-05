@@ -309,20 +309,41 @@ python3 orchestrator.py process_attachments 문서.md
 
 ## 🚨 핵심 원칙
 
+### 도구 사용 원칙
+
+- Filesystem MCP: 파일 시스템만 건드림
+  - 파일 읽기/쓰기/편집
+  - 디렉토리 생성/조회
+  - 파일 검색/정보 조회
+  - 편집할 때 edit_file 함수를 사용하고 oldText/newText 필드를 사용
+
+- Desktop Commander: 실행만 담당
+  - orchestrator.py 실행
+  - Python/Node.js REPL 등
+  - 시스템 명령 실행
+
+- Claude: 판단, 생성 및 조율
+  - 시나리오 판별
+  - Spec 기반 내용 생성
+  - 제안 및 품질 분석
+  - 두 도구 간 워크플로우 조율
+
 ### 절대 금지
 - `/10-수집/원문/` 파일 수정 ❌
 - Spec 파일 규칙 무시 또는 변경 ❌
+- Desktop Commander로 파일 직접 읽기/쓰기 ❌
+- Filesystem MCP로 Python 스크립트 실행 시도 ❌
 
 ### 사용자 확인 필요
 - 노트 삭제
 - MOC 생성
 - 프로젝트 생성
-- **자동 링크 추가** (MOC, 개념 연결)
 
 ### 자동 실행 가능
 - 즉흥메모 저장
 - 메타데이터 추가
 - 태그 정규화
+- **자동 링크 추가** (MOC, 개념 연결)
 - 검증 수행
 - **파일명 suffix 자동 증가**
 - **첨부파일 폴더 생성 및 구조화**

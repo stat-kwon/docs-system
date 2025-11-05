@@ -55,16 +55,17 @@ scenarios:
     
   project:
     description: "프로젝트 - 실행 계획"
-    filename_template: "_index.md"
+    filename_template: "{project_name}.md"
     path: "40-실행/{project_name}"
     spec_files:
       - "scenarios/project.spec.md"
     validation: []
     auto_execute: false
     create_structure:
-      - planning.md
-      - resources.md
-      - tasks.md
+      main_file: "{project_name}.md"
+      planning: "{project_name}-계획.md"
+      resources: "{project_name}-자료.md"
+      tasks: "{project_name}-작업.md"
     
   review:
     description: "리뷰 - 주간/월간 검토"

@@ -120,7 +120,38 @@ class ZettelkastenHelper:
             params['time'] = '0000'
             params['datetime'] = params['date'] + '-0000'
         
-        # 프로젝트명 처리
+        # 프로젝트 시나리오 특별 처리
+        if scenario == 'project':
+            project_name = safe_title
+            params['project_name'] = project_name
+            
+            # 프로젝트 메인 파일명
+            filename = template.format(**params)
+            path_template = rule['path']
+            path = path_template.format(project_name=project_name)
+            full_path = self.docs_root / path / filename
+            
+            # 프로젝트 구조 파일들 정의
+            structure_files = {
+                'main': f"{project_name}.md",
+                'planning': f"{project_name}-계획.md",
+                'resources': f"{project_name}-자료.md",
+                'tasks': f"{project_name}-작업.md"
+            }
+            
+            self.logger.info(f"Generated project structure for: {project_name}")
+            
+            return {
+                'filename': filename,
+                'template': template,
+                'path': path,
+                'full_path': str(full_path),
+                'project_folder': str(self.docs_root / path),
+                'structure_files': structure_files,
+                'safe_title': safe_title
+            }
+        
+        # 일반 시나리오 처리
         if 'project_name' in kwargs:
             params['project_name'] = self._slugify(kwargs['project_name'])
         
