@@ -8,6 +8,14 @@ tags:
   - project
 status: planning|in-progress|on-hold|completed
 priority: low|medium|high|urgent
+summary: ""
+topics: []
+people: []
+projects:
+  - proj-{{title}}-{{date:YYYYMMDD}}
+moc_links: []
+related_notes: []
+aliases: []
 ---
 
 # {{title}}

@@ -1,11 +1,18 @@
 ---
-id: moc-{{title}}-{{date:YYYYMMDD}}
+id: moc-{{date:YYYYMMDD}}-{{title}}
 title: "{{title}} MOC"
+type: moc
+status: in-progress
 created: {{date:YYYY-MM-DD}}
 updated: {{date:YYYY-MM-DD}}
-type: moc
+summary: ""
 tags:
   - moc
+topics: []
+people: []
+projects: []
+moc_links: []
+related_notes: []
 aliases: []
 ---
 

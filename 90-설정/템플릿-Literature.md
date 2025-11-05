@@ -1,26 +1,35 @@
 ---
-id: {{title}}
+id: lit-{{date:YYYYMMDD}}-{{title}}
 title: "{{title}}"
-source: [[원문 링크]]
-author: 
+type: literature
+status: in-progress
 created: {{date:YYYY-MM-DD}}
 updated: {{date:YYYY-MM-DD}}
-type: literature
+source: [[원문 링크]]
+url: ""
+author: ""
+summary: ""
 tags: []
-status: unprocessed
+topics: []
+people: []
+projects: []
+moc_links: []
+related_notes: []
+attachments_from_source: []
+aliases: []
 ---
 
 # {{title}}
 
-**한 줄 요약**: 
+**한 줄 요약**: <!-- summary 필드를 반영하는 한 문장 정리 -->
 
 ---
 
 ## 메타정보
 
 - **출처**: [[]]
-- **저자**: 
-- **URL**: 
+- **저자**:
+- **URL**:
 - **읽은 날짜**: {{date:YYYY-MM-DD}}
 - **문헌 유형**: 논문|블로그|책|기사
 
@@ -66,6 +75,6 @@ status: unprocessed
 
 ## 다음 단계
 
-- [ ] Permanent Note 추출: 
-- [ ] 추가 조사: 
+- [ ] Permanent Note 추출:
+- [ ] 추가 조사:
 - [ ] MOC 업데이트:
