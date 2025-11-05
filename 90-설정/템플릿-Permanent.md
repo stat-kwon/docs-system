@@ -1,11 +1,19 @@
 ---
-id: perm-{{title}}-{{date:YYYYMMDD}}
+id: perm-{{date:YYYYMMDD}}-{{title}}
 title: "{{title}}"
+type: permanent
+status: in-progress
 created: {{date:YYYY-MM-DD}}
 updated: {{date:YYYY-MM-DD}}
-type: permanent
+source: [[관련 Literature Note]]
+summary: ""
 tags:
   - permanent
+topics: []
+people: []
+projects: []
+moc_links: []
+related_notes: []
 aliases: []
 ---
 

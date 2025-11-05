@@ -2,43 +2,58 @@
 version: "1.0"
 docs_root: "/Users/seolmin.kwon/Documents/docs-system"
 
+context:
+  target_total_lines: 270
+
 # 시나리오 정의
 scenarios:
   capture:
     description: "즉흥메모 - 아이디어, TODO, 빠른 생각 캡처"
     filename_template: "{date}-{time}-{title}.md"
     path: "10-수집/즉흥메모"
+    template: "템플릿-즉흥메모.md"
     spec_files:
       - "scenarios/capture.spec.md"
       - "core/metadata.spec.md"
+      - "core/templates.spec.md"
     validation:
       - source_field_exists
       - tags_field_exists
+    validator_specs:
+      - "validators/priority.spec.md"
     auto_execute: true
     
   process:
     description: "자료정리 - 원문 분석 및 요약"
     filename_template: "정리-{date}-{title}.md"
     path: "20-정리/자료정리"
+    template: "템플릿-Literature.md"
     spec_files:
       - "scenarios/process.spec.md"
       - "core/metadata.spec.md"
+      - "core/templates.spec.md"
     validation:
       - source_field_exists
       - source_must_be_원문
+    validator_specs:
+      - "validators/link-validator.spec.md"
     auto_execute: true
     
   create:
     description: "핵심개념 - 단일 원자적 개념 (100줄 제한)"
     filename_template: "개념-{date}{suffix}-{title}.md"
     path: "20-정리/핵심개념"
+    template: "템플릿-Permanent.md"
     spec_files:
       - "scenarios/create.spec.md"
       - "core/metadata.spec.md"
       - "core/link-rules.spec.md"
+      - "core/templates.spec.md"
     validation:
       - source_field_exists
       - moc_link_recommended
+    validator_specs:
+      - "validators/link-validator.spec.md"
     auto_execute: false  # MOC 연결 제안 필요
     needs_suffix: true
     
@@ -46,20 +61,30 @@ scenarios:
     description: "MOC - 개념 연결 맵"
     filename_template: "맵-{title}.md"
     path: "30-연결"
+    template: "템플릿-MOC.md"
     spec_files:
       - "scenarios/connect.spec.md"
       - "core/link-rules.spec.md"
+      - "core/metadata.spec.md"
+      - "core/templates.spec.md"
     validation:
       - min_concepts: 3
+    validator_specs:
+      - "validators/link-validator.spec.md"
     auto_execute: false
     
   project:
     description: "프로젝트 - 실행 계획"
     filename_template: "{project_name}.md"
     path: "40-실행/{project_name}"
+    template: "템플릿-Project.md"
     spec_files:
       - "scenarios/project.spec.md"
+      - "core/metadata.spec.md"
+      - "core/templates.spec.md"
     validation: []
+    validator_specs:
+      - "validators/priority.spec.md"
     auto_execute: false
     create_structure:
       main_file: "{project_name}.md"
@@ -71,6 +96,7 @@ scenarios:
     description: "리뷰 - 주간/월간 검토"
     spec_files:
       - "scenarios/review.spec.md"
+      - "core/metadata.spec.md"
     read_only: true
     
   search:
@@ -80,38 +106,12 @@ scenarios:
     read_only: true
     is_default: true  # Claude가 판단하지 못할 때 기본값
 
-# 전역 검증 설정
-validation:
-  source_chain: required
-  moc_link_min: 1
-  concept_link_min: 2
-
 # Suffix 설정
 suffix:
   chars: "abcdefghij"
-  
+
 # 첨부파일 설정
 attachments:
   base_path: "80-보관/첨부파일"
   organize_by: date
   date_format: "%Y%m%d"
-
-# 제안 설정
-suggestions:
-  enabled: true
-  
-  moc:
-    triggers: ["create", "process"]
-    min_tag_matches: 1
-    max_suggestions: 3
-    
-  concept:
-    triggers: ["create"]
-    min_tag_matches: 1
-    max_suggestions: 5
-    
-  # Claude가 판단할 때 참고할 가중치
-  similarity_weights:
-    tag_match: 0.5      # 태그 일치 50%
-    title_similarity: 0.3  # 제목 유사도 30%
-    content_relevance: 0.2 # 내용 관련성 20%

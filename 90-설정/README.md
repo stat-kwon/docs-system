@@ -1,340 +1,129 @@
 # Zettelkasten 자동화 시스템
 
-> Obsidian 기반 지식관리 시스템의 자동화 도구
+> Obsidian 기반 지식관리 시스템을 위한 워크플로 오케스트레이터
 
-## 📋 목차
-- [개요](#개요)
-- [시스템 아키텍처](#시스템-아키텍처)
-- [핵심 구성요소](#핵심-구성요소)
-- [동작 방식](#동작-방식)
-- [CLI 명령어](#cli-명령어)
-- [시나리오](#시나리오)
-- [설정](#설정)
+## 📌 한눈에 보기
+- ⚙️ **모듈형 서비스 아키텍처**: 설정 로딩, 스펙 번들링, 파일명 생성, 템플릿 조회, 첨부파일 처리를 각각의 서비스가 담당합니다.
+- 🧩 **SSOT 중심 설계**: 모든 규칙은 `rules.yaml`과 `specs/` 디렉터리에 집중되어 있으며, 템플릿과 검증 규칙도 단일 출처로 관리됩니다.
+- 📉 **컨텍스트 예산 관리**: 시나리오마다 로드된 스펙/밸리데이터의 라인 수를 집계해 LLM 프롬프트 길이를 통제합니다.
+- 🧾 **풍부한 메타데이터**: 템플릿과 스펙이 확장된 frontmatter 필드를 공유해 검색성 높은 노트를 생성합니다.
 
-## 개요
-
-이 시스템은 Zettelkasten 방법론을 기반으로 한 지식관리 시스템을 자동화합니다. Python 기반 orchestrator와 모듈형 spec 시스템을 통해 효율적인 노트 생성과 관리를 지원합니다.
-
-### 주요 특징
-- 🚀 **동적 Spec 로딩**: 시나리오별 필요한 spec만 로드 (89% 컨텍스트 절감)
-- 🤖 **LLM 통합**: Claude Desktop과 완벽한 통합
-- 📁 **자동화된 워크플로우**: 파일명 생성, 검증, 첨부파일 처리
-- 🔧 **모듈형 설계**: 12개의 독립적인 spec 파일로 구성
-
-## 시스템 아키텍처
-
+## 디렉터리 개요
 ```
-┌─────────────────────────────────────────┐
-│         사용자 입력 (Claude Desktop)      │
-└────────────────┬────────────────────────┘
-                 ▼
-┌─────────────────────────────────────────┐
-│      LLM 시나리오 판별                    │
-│   (capture/process/create/connect...)    │
-└────────────────┬────────────────────────┘
-                 ▼
-┌─────────────────────────────────────────┐
-│           orchestrator.py                │
-│  ┌─────────────────────────────────┐    │
-│  │  1. load_specs: 동적 spec 로드   │    │
-│  │  2. filename: 파일명 생성        │    │
-│  │  3. validate: 검증 수행          │    │
-│  │  4. workflow: 통합 실행          │    │
-│  └─────────────────────────────────┘    │
-└────────────────┬────────────────────────┘
-                 ▼
-┌─────────────────────────────────────────┐
-│            rules.yaml                    │
-│     시나리오별 규칙 및 설정               │
-└─────────────────────────────────────────┘
-                 ▼
-┌─────────────────────────────────────────┐
-│              specs/                      │
-│  ├── core/      (기본 규칙)              │
-│  ├── scenarios/ (시나리오별 명세)         │
-│  └── validators/ (검증 규칙)             │
-└─────────────────────────────────────────┘
+90-설정/
+├─ README.md                     # 현재 문서
+├─ claude_code_system_prompt.md  # Claude용 시스템 가이드
+├─ context-engineering-optimization.md
+├─ orchestrator.py               # CLI 진입점 (workflow, process-attachments)
+├─ orchestrator/                 # 서비스 모듈 집합
+│  ├─ __init__.py                # 서비스 팩토리
+│  ├─ attachment_service.py      # 첨부파일 이동 및 링크 업데이트
+│  ├─ config_loader.py           # rules.yaml + docs_root 해석
+│  ├─ context_budget.py          # 컨텍스트 사용량 요약
+│  ├─ filename_service.py        # 시나리오별 파일명 생성
+│  ├─ logging_config.py          # 로거 설정
+│  ├─ spec_loader.py             # 스펙/밸리데이터 로딩
+│  ├─ template_service.py        # 템플릿 메타데이터 설명
+│  └─ workflow_service.py        # 서비스 조합 및 최종 응답 생성
+├─ rules.yaml                    # 시나리오/템플릿/검증 규칙의 SSOT
+├─ specs/                        # core 규칙 + 시나리오 스펙 + validator 번들
+└─ 템플릿-*.md                    # 노트 생성용 frontmatter 템플릿
 ```
 
-## 핵심 구성요소
-
-### 1. orchestrator.py
-메인 실행 엔진으로 모든 자동화 기능을 담당합니다.
-
-**주요 메서드:**
-- `load_specs_for_scenario()`: 시나리오별 spec 동적 로드
-- `get_filename()`: 규칙 기반 파일명 생성
-- `validate()`: 파일 구조 및 내용 검증
-- `workflow()`: 통합 워크플로우 실행
-- `process_attachments()`: 첨부파일 분석
-- `execute_attachments()`: 첨부파일 처리 실행
-
-### 2. rules.yaml
-시나리오별 규칙과 설정을 정의합니다.
-
-```yaml
-scenarios:
-  capture:
-    description: "즉흥메모 - 아이디어, TODO, 빠른 생각 캡처"
-    filename_template: "{date}-{time}-{title}.md"
-    path: "10-수집/즉흥메모"
-    spec_files:
-      - "scenarios/capture.spec.md"
-      - "core/metadata.spec.md"
+## 아키텍처 흐름
+```
+┌─────────────────────────┐
+│ Claude Desktop (사용자 입력) │
+└─────────────┬──────────┘
+              ▼
+┌─────────────────────────┐
+│ orchestrator.py (CLI)   │  argparse → build_services()
+└─────────────┬──────────┘
+              ▼
+┌─────────────────────────┐      ┌────────────────────────────┐
+│ WorkflowService         │◀────▶│ SpecLoader / TemplateSvc   │
+│ - 시나리오 확인          │      │ - spec / validator 번들링   │
+│ - 컨텍스트 예산 보고      │      │ - 템플릿 frontmatter 설명    │
+│ - 파일명 생성 위임        │      └────────────────────────────┘
+│ - 검증 규칙/자동 실행 상태│
+└─────────────┬──────────┘
+              ▼
+┌─────────────────────────┐
+│ AttachmentService       │ (process-attachments 전용)
+└─────────────────────────┘
 ```
 
-### 3. Specs 디렉토리
-```
-specs/
-├── core/           # 기본 규칙 (4개)
-│   ├── metadata.spec.md     # 메타데이터 표준
-│   ├── structure.spec.md    # 폴더 구조
-│   ├── link-rules.spec.md   # 링크 규칙
-│   └── suggestions.spec.md  # 제안 시스템
-├── scenarios/      # 시나리오별 명세 (7개)
-│   ├── capture.spec.md      # 즉흥메모
-│   ├── process.spec.md      # 자료정리
-│   ├── create.spec.md       # 핵심개념
-│   ├── connect.spec.md      # MOC
-│   ├── project.spec.md      # 프로젝트
-│   ├── review.spec.md       # 리뷰
-│   └── search.spec.md       # 검색
-└── validators/     # 검증 규칙 (2개)
-    ├── link-validator.spec.md  # 링크 검증
-    └── priority.spec.md        # 우선순위
-```
+## 핵심 구성 요소
+### orchestrator.py
+- `workflow`와 `process-attachments` 두 개의 서브커맨드를 제공하는 얇은 CLI 레이어입니다.
+- 실행 시 `build_services()`를 통해 모든 서비스 인스턴스를 구성하고 JSON 응답을 반환합니다.
 
-### 4. 템플릿
-각 노트 타입별 기본 템플릿을 제공합니다.
-- `템플릿-즉흥메모.md`
-- `템플릿-Literature.md`
-- `템플릿-Permanent.md`
-- `템플릿-MOC.md`
-- `템플릿-Project.md`
+### orchestrator 패키지
+| 모듈 | 역할 |
+| --- | --- |
+| `config_loader.ConfigLoader` | `rules.yaml`을 읽고 `docs_root`, 컨텍스트 목표치를 계산합니다. 환경 변수 `DOCS_HOME`이 우선합니다. |
+| `spec_loader.SpecLoader` | 시나리오별로 정의된 spec/validator 파일을 로드하고 원문과 라인 수를 제공해 컨텍스트 예산을 계산합니다. |
+| `filename_service.FilenameService` | 슬러그 정규화, 접두사/폴더 계산, 중복 방지용 시퀀스 처리를 담당합니다. |
+| `template_service.TemplateService` | 템플릿 파일의 frontmatter 필드를 파싱해 LLM이 사용할 설명을 제공합니다. |
+| `workflow_service.WorkflowService` | 위 서비스들을 조합해 단일 호출로 필요한 정보(스펙, 템플릿, 파일명, 검증 규칙, 컨텍스트 라인)를 돌려줍니다. |
+| `attachment_service.AttachmentService` | 노트에 첨부된 리소스를 표준 위치로 이동시키고 링크를 업데이트합니다. |
+| `context_budget.summarize` | 로드된 spec/validator의 총 라인 수를 계산하여 목표(기본 270줄) 대비 현황을 보고합니다. |
 
-## 동작 방식
+### rules.yaml
+- `scenarios.<name>` 아래에 템플릿, 스펙 번들, 검증 규칙, 자동 실행 여부 등이 정의됩니다.
+- `context.target_total_lines`로 워크플로 호출 시 목표 컨텍스트 길이를 관리합니다.
+- 새로운 시나리오는 이 파일 하나만 수정하면 나머지 서비스가 자동으로 반영합니다.
 
-### 1단계: 시나리오 판별 (LLM)
-```python
-# Claude가 사용자 입력 분석
-scenario = analyze_user_input("AI 에이전트 핵심개념 만들어줘")
-# 결과: "create"
-```
+### specs/
+- `core/`: 구조, 메타데이터, 링크, 템플릿 사용 지침 등 전역 규칙을 정의합니다.
+- `scenarios/`: 시나리오별 체크리스트와 필요한 include 목록을 담습니다.
+- `validators/`: 링크/우선순위 검증 등 후속 점검 시 참고할 규칙입니다.
 
-### 2단계: Spec 로드
+### 템플릿
+- `템플릿-*.md` 파일은 frontmatter와 본문 구조를 제공하며, `TemplateService`가 필수/선택 필드를 JSON으로 설명합니다.
+- 템플릿만 수정하면 워크플로 응답 및 검증 규칙에 동일하게 반영되어 SSOT를 유지합니다.
+
+## CLI 사용법
 ```bash
-python3 orchestrator.py load_specs create
-```
-**결과:**
-- 로드된 specs: 3개 (create.spec.md, metadata.spec.md, link-rules.spec.md)
-- 총 라인: 169줄 (원본 1,392줄 대비 88% 절감)
+# 시나리오 전체 워크플로 (spec 번들 + 컨텍스트 보고 + 템플릿 + 파일명)
+python3 orchestrator.py workflow <scenario> [title] [--set key=value ...]
 
-### 3단계: 파일명 생성
+# 첨부파일 이동 및 링크 패치
+python3 orchestrator.py process-attachments <markdown-path> [--dry-run]
+```
+
+### 예시
 ```bash
-python3 orchestrator.py filename create "AI 에이전트"
+$ python3 orchestrator.py workflow create "에이전트 설계"
+{
+  "scenario": "create",
+  "specs": { ... },
+  "template": {
+    "path": "90-설정/템플릿-Permanent.md",
+    "frontmatter": {"title": "", "aliases": [], ...}
+  },
+  "filename": {
+    "path": "20-정리/핵심개념/개념-20241104a-에이전트설계.md",
+    "slug": "에이전트설계",
+    "sequence": "a"
+  },
+  "context_lines": {"total": 188, "target": 270, ...}
+}
 ```
-**결과:** `개념-20241104a-AI에이전트.md`
 
-### 4단계: 검증
 ```bash
-python3 orchestrator.py validate "파일경로.md"
+$ python3 orchestrator.py process-attachments "20-정리/핵심개념/개념-20241104a-에이전트설계.md" --dry-run
+{
+  "moved": [],
+  "links_updated": [],
+  "notes": "No attachments found"
+}
 ```
 
-## CLI 명령어
+## 개발 팁
+- **환경 변수**: `DOCS_HOME`을 지정하면 다른 워크스페이스에서도 동일 설정으로 실행할 수 있습니다.
+- **의존성**: 표준 라이브러리 외 별도 패키지를 사용하지 않습니다.
+- **테스트**: `python3 -m compileall 90-설정/orchestrator.py 90-설정/orchestrator` 명령으로 기본 구문 검사를 수행합니다.
 
-### 기본 명령어
-
-#### `load_specs <scenario>`
-시나리오에 필요한 spec 파일을 동적으로 로드합니다.
-```bash
-python3 orchestrator.py load_specs capture
-```
-
-#### `workflow <scenario> [title]`
-spec 로드와 파일명 생성을 한번에 수행합니다.
-```bash
-python3 orchestrator.py workflow create "테스트 개념"
-```
-
-#### `filename <scenario> <title>`
-규칙에 따라 파일명을 생성합니다.
-```bash
-python3 orchestrator.py filename capture "아이디어"
-# 결과: 20241104-1530-아이디어.md
-```
-
-#### `validate <filepath> [mode]`
-파일 구조와 내용을 검증합니다.
-- `deep` (기본): 상세 검증 + validator specs
-- `quick`: 기본 구조 검증만
-```bash
-python3 orchestrator.py validate "개념-20241104a-AI.md"
-```
-
-### 목록 조회
-
-#### `list_mocs`
-모든 MOC(Map of Content) 목록을 조회합니다.
-```bash
-python3 orchestrator.py list_mocs
-```
-
-#### `list_concepts [filters]`
-핵심개념 목록을 조회합니다.
-```bash
-python3 orchestrator.py list_concepts '{"tags": ["ai"]}'
-```
-
-### 첨부파일 처리
-
-#### `attachments <filepath>`
-파일의 첨부파일을 분석합니다.
-```bash
-python3 orchestrator.py attachments "문서.md"
-```
-
-#### `process_attachments <filepath> [--dry-run]`
-첨부파일을 자동으로 처리합니다.
-```bash
-# 미리보기
-python3 orchestrator.py process_attachments "문서.md" --dry-run
-
-# 실제 처리
-python3 orchestrator.py process_attachments "문서.md"
-```
-
-**처리 내용:**
-- 이미지 파일을 `/80-보관/첨부파일/YYYYMMDD/`로 이동
-- 마크다운 링크 자동 업데이트
-- Obsidian 형식 `![[file.png]]` → 표준 형식 `![](../../80-보관/첨부파일/YYYYMMDD/file.png)`
-
-### 기타
-
-#### `preview <filepath> [lines]`
-파일 미리보기 (기본 5줄)
-```bash
-python3 orchestrator.py preview "파일.md" 10
-```
-
-#### `scenario_info <scenario>`
-시나리오 정보 조회
-```bash
-python3 orchestrator.py scenario_info create
-```
-
-## 시나리오
-
-### capture (즉흥메모)
-- **용도**: 아이디어, TODO, 빠른 생각 캡처
-- **경로**: `10-수집/즉흥메모/`
-- **파일명**: `YYYYMMDD-HHMM-제목.md`
-- **Specs**: capture.spec.md, metadata.spec.md
-
-### process (자료정리)
-- **용도**: 원문 분석 및 요약
-- **경로**: `20-정리/자료정리/`
-- **파일명**: `정리-YYYYMMDD-제목.md`
-- **Specs**: process.spec.md, metadata.spec.md
-
-### create (핵심개념)
-- **용도**: 단일 원자적 개념 (100줄 제한)
-- **경로**: `20-정리/핵심개념/`
-- **파일명**: `개념-YYYYMMDDa-제목.md`
-- **Specs**: create.spec.md, metadata.spec.md, link-rules.spec.md
-- **특징**: suffix 자동 증가 (a, b, c...)
-
-### connect (MOC)
-- **용도**: 개념 연결 맵
-- **경로**: `30-연결/`
-- **파일명**: `맵-제목.md`
-- **Specs**: connect.spec.md, link-rules.spec.md
-
-### project (프로젝트)
-- **용도**: 실행 계획
-- **경로**: `40-실행/프로젝트명/`
-- **파일명**: `_index.md`
-- **Specs**: project.spec.md
-
-### review (리뷰)
-- **용도**: 주간/월간 검토
-- **읽기 전용**
-- **Specs**: review.spec.md
-
-### search (검색)
-- **용도**: 기본 시나리오 (명확하지 않은 입력)
-- **읽기 전용**
-- **Specs**: search.spec.md
-
-## 설정
-
-### rules.yaml 구조
-```yaml
-version: "1.0"
-docs_root: "/path/to/docs-system"
-
-scenarios:
-  scenario_name:
-    description: "설명"
-    filename_template: "템플릿"
-    path: "저장 경로"
-    spec_files: [spec 목록]
-    validation: [검증 규칙]
-    auto_execute: true/false
-    needs_suffix: true/false
-
-attachments:
-  base_path: "80-보관/첨부파일"
-  organize_by: "date"
-  date_format: "%Y%m%d"
-
-suffix:
-  chars: "abcdefghij"
-```
-
-### 환경 변수
-- `DOCS_HOME`: 문서 시스템 루트 경로 (선택사항)
-- `LOG_LEVEL`: 로그 레벨 (INFO, DEBUG, ERROR)
-
-### Claude Desktop 통합
-`claude_code_system_prompt.md` 파일을 Claude Desktop의 시스템 프롬프트로 설정하면 자동으로 이 시스템을 활용합니다.
-
-## 성능
-
-### 컨텍스트 최적화
-| 시나리오 | 로드된 Specs | 총 라인수 | 절감률 |
-|---------|-------------|---------|--------|
-| capture | 2개 | 116줄 | 92% |
-| process | 2개 | 150줄 | 89% |
-| create  | 3개 | 169줄 | 88% |
-| connect | 2개 | 193줄 | 86% |
-| **평균** | **2.3개** | **157줄** | **89%** |
-
-기존 monolithic 프롬프트(1,392줄) 대비 평균 89% 컨텍스트 절감
-
-## 문제 해결
-
-### Python 스크립트가 실행되지 않을 때
-```bash
-# Python 3 설치 확인
-python3 --version
-
-# 직접 테스트
-cd /path/to/90-설정
-python3 orchestrator.py load_specs create
-```
-
-### 파일을 찾을 수 없을 때
-- `rules.yaml`의 `docs_root` 경로 확인
-- 환경변수 `DOCS_HOME` 설정 확인
-
-### 첨부파일 처리가 실패할 때
-- 대상 디렉토리 권한 확인
-- 이미지 파일이 실제로 존재하는지 확인
-
-## 기여
-
-이 시스템은 지속적으로 개선되고 있습니다. 다음 영역에서 기여를 환영합니다:
-- Validator 자동화 구현
-- 새로운 시나리오 추가
-- 성능 최적화
-- 문서 개선
+---
+이 README는 최신 워크플로 통합 구조와 SSOT 전략을 반영하도록 갱신되었습니다.
